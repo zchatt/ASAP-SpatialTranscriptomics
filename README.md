@@ -5,7 +5,7 @@
  
 ### Visium_giotto.R: Data Processing and Analysis 
 Overview
-This script utilize [Giotto](https://giottosuite.readthedocs.io/en/latest/index.html), a popular R package for analyzing spatial transcriptomic data. The scripts are designed to perform various analyses on Visium data, including data preprocessing, dimension reduction, clustering, and cell-type enrichment.
+ This script utilize [Giotto](https://giottosuite.readthedocs.io/en/latest/index.html), a popular R package for analyzing spatial transcriptomic data. The scripts are designed to perform various analyses on Visium data, including data preprocessing, dimension reduction, clustering, and cell-type enrichment.
 
 Th script takes the following inputs:
 
