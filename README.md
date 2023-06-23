@@ -59,7 +59,7 @@ The script performs similar steps to , with some modifications to accommodate th
 
 6. Clustering: The reduced data is clustered using t-distributed Stochastic Neighbor Embedding (tSNE) and Uniform Manifold Approximation and Projection (UMAP) algorithms.
 
-7. Cell-type enrichment: The script performs cell-type enrichment analysis using gene markers for specific cell types, as in Script 1.
+7. Cell-type enrichment: The script performs cell-type enrichment analysis using gene markers for specific cell types, as described above.
 
 ### Usage
 To run the script, follow these steps:
@@ -68,7 +68,7 @@ To run the script, follow these steps:
 
 2. Prepare your GeoMx data matrix and relevant metadata, and place them in the appropriate directories.
 
-3. Open the R script script2.R and modify the file paths and parameters as needed.
+3. Open the R script and modify the file paths and parameters as needed.
 
 4. Run the script using an R environment or an integrated development environment (IDE).
 
