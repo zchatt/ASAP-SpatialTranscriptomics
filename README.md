@@ -41,7 +41,7 @@ To run the script, follow these steps:
 
 5. Review the generated results and output files for further analysis.
 
-### Geomx_giotto.R: GeoMx Data Processing and Analysis
+## Geomx_giotto.R: GeoMx Data Processing and Analysis
 ### Overview
 This scrips is designed to analyze GeoMx spatial transcriptomics data produced by NanoString consisting spatial "Areas of Interest" (AOIs).
 
