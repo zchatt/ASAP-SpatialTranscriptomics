@@ -1,6 +1,6 @@
 ## ASAP-SpatialTranscriptomics
 
-## This repository contains analysis scripts used by The University of Sydney collaborators in the analysis of spatial transcriptomics as part of [Aligning Science Accross Parkinson's](https://parkinsonsroadmap.org/#).
+### This repository contains analysis scripts used by The University of Sydney collaborators in the analysis of spatial transcriptomics as part of [Aligning Science Accross Parkinson's](https://parkinsonsroadmap.org/#).
 
  
 ## Visium_giotto.R: Data Processing and Analysis 
