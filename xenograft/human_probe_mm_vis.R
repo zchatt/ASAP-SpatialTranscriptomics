@@ -1,4 +1,4 @@
-# Quality assessment of Visium human probes in mouse tissue for running of Xenografts on Visium 10X human array.
+# Assessment of Visium human probes in mouse tissue for running of Xenografts on Visium 10X human array.
 
 # Libraries
 library(stringr)
@@ -6,10 +6,11 @@ library(DECIPHER)
 library(seqinr)
 library(Rsamtools)
 library(ggplot2)
-libraru(biomaRt)
+library(biomaRt)
+library(ggpubr)
+library(plyr)
 
-#function for collapsing the list of lists into a single list
-#as per the Rsamtools vignette
+# function for collapsing the list of lists into a single list as per the Rsamtools vignette
 .unlist <- function (x){
   ## do.call(c, ...) coerces factor to integer, which is undesired
   x1 <- x[[1L]]
@@ -20,14 +21,12 @@ libraru(biomaRt)
   }
 }
 
-
 # setwd
 setwd("/Users/zacc/USyd/spatial_transcriptomics/analysis/xenograft")
 
 #####################
 ### Pre-alignment ###
 #####################
-
 # read in probe sets
 human_v1 <- read.delim("/Users/zacc/USyd/spatial_transcriptomics/data/probe_sets/Visium_Human_Transcriptome_Probe_Set_v1.0_GRCh38-2020-A.csv",
                        sep=",", skip=5)
@@ -42,7 +41,7 @@ mouse_v1 <- read.delim("/Users/zacc/USyd/spatial_transcriptomics/data/probe_sets
 mouse_v1$gene <- str_match(mouse_v1$probe_id, "\\|(.*?)\\|")[,2]
 
 # # convert mouse gene names to human equivalent. Taken from https://www.r-bloggers.com/2016/10/converting-mouse-to-human-gene-names-with-biomart-package/ - Thank you!
-## Ensemble servers down  - will revisit
+## Ensemble servers down 11/08/23 - will revisit
 # musGenes <- mouse_v1$gene
 # human = useMart("ensembl", dataset = "hsapiens_gene_ensembl",host="asia.ensembl.org")
 # mouse = useMart("ensembl", dataset = "mmusculus_gene_ensembl",host="asia.ensembl.org")
@@ -64,9 +63,9 @@ write.fasta(as.list(mouse_v1$probe_seq), mouse_v1$probe_id, file.out = "mouse_v1
 
 # Please refer to "align_species.pbs" script for details on alignment 
 
-#####################
+######################
 ### Post-alignment ###
-#####################
+######################
 # read in aligned BAM files
 bamFile <- BamFile("human_map_humanAligned.sortedByCoord.out.bam")
 hh_bam <- scanBam(bamFile)
@@ -79,13 +78,13 @@ mapped_probes <- c(rep("human:human",length(hh_bam[[1]]$mapq)),rep("mouse:human"
 
 df <- as.data.frame(cbind(mapped_probes,MAPQ))
 plot_hist_mapq <- ggplot(df, aes(x=MAPQ, color=mapped_probes)) +
-  geom_histogram(fill="white", alpha=0.5, stat="count",position="dodge") + theme_minimal() +
+  geom_histogram(fill="white", alpha=0.5, stat="count",position="dodge") + theme_minimal() + theme(legend.position="top") +
   stat_count(binwidth = 1, 
              geom = 'text', 
              aes(label = ..count..),
              position = position_stack(vjust = 0.8))
 
-# Probes muniquely apping mouse genome
+# Define probes uniquely mapping to mouse genome
 #store names of BAM fields
 bam_field <- names(mh_bam[[1]])
 #go through each BAM field and unlist
@@ -116,73 +115,76 @@ git_repo_location = "/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/celltyp
 load(paste0(git_repo_location,"gene_marker_list.cellenrich.R"))
 
 # calculate numbers of cell-type marker genes covered by human probes that uniquely map mouse genome
+tmp <- lapply(gene_marker_list_total, function(x) table(x %in% toupper(mh_bam_df$gene)))
+tmp2 <- as.data.frame(do.call(rbind, tmp))
+tmp2$percent_mapped <- tmp2[,2] / (tmp2[,2] + tmp2[,1]) * 100
+tmp2$cell <- row.names(tmp2)
+  
+plot_bar_celltypemarkers <- ggplot(tmp2, aes(x=cell, y=percent_mapped)) +
+  geom_bar(stat="identity") + theme_minimal() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ylab("marker gene transcripts covered (%) ")
+
+# plot
+png("human_probe_mappingmouse.png")
+ggarrange(plot_hist_mapq,
+          plot_bar_celltypemarkers,
+          ncol = 1,
+          nrow = 2)
+dev.off()
+
+## Still to implement - using MAPQ scores atm, future iterations will incorporate Gibbs free energy estimates to ID probes with high binding affinity to targets
+# # read in BED files of reference FASTA matching aligned BAM
+# hh_bed <- read.delim(file="human_map_humanAligned.sortedByCoord.out.bed", sep="\t", header=FALSE)
+# # quantify delta-G for each alignment of human
+# # delta-G cutoff for each unique alignment v else human
+# # quantify delta-G for each unique alignment of mouse
 
 
-
-# read in BED files of reference FASTA matching aligned BAM
-hh_bed <- read.delim(file="human_map_humanAligned.sortedByCoord.out.bed", sep="\t", header=FALSE)
-
-# quantify delta-G for each alignment of human 
-
-
-# delta-G cutoff for each unique alignment v else human
-
-
-# quantify delta-G for each unique alignment of mouse
-
-
-# hamming distance matrix 
-myXStringSet<- DNAStringSet(c(mouse_v1$probe_seq,human_v2$probe_seq))
-dist_mat <- DistanceMatrix(myXStringSet,correction = "none", method = "longest")
-# multiply by probe length to get hamming distance
-dist_mat <- dist_mat * 
-
-
-
-# NOTES
-# we could identify a good list of probes mapping to the mouse genome through alignment to 
-# rat genome (bwa-mem) and then delta-G calculation (primer-3)
-
-
-
-
-# list of probes to keep
-
-
-
-# Filter the human v2 probes to create a mouse applicable CSV
+## Write new probes CSV file for quantification of mouse transcripts by filtering the human v2 probes to create a mouse applicable CSV
+# Eg. Specify the mouse transcripts targeted by human probes
 # Eg. Edit the probes CSV file so the probe’s 'included' column is 'TRUE'. This selectively includes the probe in spaceranger count analysis.
+mouse_xeno_v2 <- human_v2
+mouse_xeno_v2$included <- mouse_xeno_v2
 
+gene_id <- mapvalues(mh_bam_df$seq,human_v2$probe_id,human_v2$gene_id)
 
+gene_id <- sub("\\|.*", "", mh_bam_df$qname)
+probe_seq  <- mh_bam_df$seq
+probe_id <-  mh_bam_df$qname
+included <- rep("TRUE",length(gene_id))  
+region <- rep("unspliced",length(gene_id)) #NOTE this is not correct, need to get splce site info when ensemble is up.
 
-# Xenograft samples will be aligned twice, once using standard human V2 probeset and again using mouse applicable probe set
+tmp <- cbind(gene_id,probe_seq,probe_id,included,region)
 
-spaceranger count \
-  --id=V52Y16-079-B1 \
-  --transcriptome=/directflow/GWCCGPipeline/projects/reference/refdata-cellranger-GRCh38-2020-A \
-  --fastqs=/directflow/GWCCGPipeline/projects/bioinformatics/SANPIN_VisiumFFPE_Cytassist/fastq_path/221007_A00152_0716_AH7KLFDSX5/V52Y16-079-B1/VISIUM \
-  --sample=V52Y16-079-B1 \
-  --slide=V52Y16-079 \
-  --area=B1 \
-  --image=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.tif \
-  --cytaimage=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.ca.tif \
-  --loupe-alignment=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.json \
-  --probe-set=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/probe_set.csv \
-  --jobmode=local \
-  --localcores=16 \
-  --localmem=256
+write.table(,file="Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv", sep=',', quote=F,row.names = F)
 
-spaceranger count \
---id=V52Y16-079-B1 \
---transcriptome=/directflow/GWCCGPipeline/projects/reference/refdata-cellranger-GRCh38-2020-A \
---fastqs=/directflow/GWCCGPipeline/projects/bioinformatics/SANPIN_VisiumFFPE_Cytassist/fastq_path/221007_A00152_0716_AH7KLFDSX5/V52Y16-079-B1/VISIUM \
---sample=V52Y16-079-B1 \
---slide=V52Y16-079 \
---area=B1 \
---image=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.tif \
---cytaimage=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.ca.tif \
---loupe-alignment=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.json \
---probe-set=Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv \
---jobmode=local \
---localcores=16 \
---localmem=256
+# NOTE; Xenograft samples will be aligned twice, once using standard human V2 probeset and again using mouse applicable probe set
+# spaceranger count \
+#   --id=V52Y16-079-B1 \
+#   --transcriptome=/directflow/GWCCGPipeline/projects/reference/refdata-cellranger-GRCh38-2020-A \
+#   --fastqs=/directflow/GWCCGPipeline/projects/bioinformatics/SANPIN_VisiumFFPE_Cytassist/fastq_path/221007_A00152_0716_AH7KLFDSX5/V52Y16-079-B1/VISIUM \
+#   --sample=V52Y16-079-B1 \
+#   --slide=V52Y16-079 \
+#   --area=B1 \
+#   --image=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.tif \
+#   --cytaimage=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.ca.tif \
+#   --loupe-alignment=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.json \
+#   --probe-set=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/probe_set.csv \
+#   --jobmode=local \
+#   --localcores=16 \
+#   --localmem=256
+# 
+# spaceranger count \
+# --id=V52Y16-079-B1 \
+# --transcriptome=/directflow/GWCCGPipeline/projects/reference/refdata-cellranger-GRCh38-2020-A \
+# --fastqs=/directflow/GWCCGPipeline/projects/bioinformatics/SANPIN_VisiumFFPE_Cytassist/fastq_path/221007_A00152_0716_AH7KLFDSX5/V52Y16-079-B1/VISIUM \
+# --sample=V52Y16-079-B1 \
+# --slide=V52Y16-079 \
+# --area=B1 \
+# --image=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.tif \
+# --cytaimage=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.ca.tif \
+# --loupe-alignment=resources/count/SANPIN_VisiumFFPE_Cytassist/V52Y16-079-B1/VISIUM/V52Y16-079-B1.json \
+# --probe-set=Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv \
+# --jobmode=local \
+# --localcores=16 \
+# --localmem=256
