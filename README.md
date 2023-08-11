@@ -2,7 +2,7 @@
 
 This repository contains analysis scripts used by The University of Sydney collaborators to analyse spatial transcriptomics as part of [Aligning Science Accross Parkinson's](https://parkinsonsroadmap.org/#).
 
-NOTE: This currently in development and likely to change frequently 
+NOTE: This repo currently in development and likely to change frequently 
  
 ## Visium_giotto.R: Data Processing and Analysis 
 ### Overview
