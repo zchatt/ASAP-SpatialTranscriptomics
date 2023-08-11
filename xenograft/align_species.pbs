@@ -1,0 +1,79 @@
+#!/bin/bash
+#PBS -P FFbigdata
+#PBS -N star_align
+#PBS -l select=1:ncpus=12:mem=60GB
+#PBS -l walltime=24:00:00
+
+module load gcc/4.9.3 star/2.7.8a
+module load bedtools
+
+## Make genome indexes
+cd /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38
+#gunzip /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/*gz
+
+STAR --runThreadN 6 \
+--runMode genomeGenerate \
+--genomeDir STAR_index_grc38 \
+--genomeFastaFiles /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+--sjdbGTFfile /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/Homo_sapiens.GRCh38.109.gtf \
+--sjdbOverhang 49
+
+# cd /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/mm39/
+# #gunzip /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/mm39/*gz
+
+# STAR --runThreadN 6 \
+# --runMode genomeGenerate \
+# --genomeDir STAR_index_mm39 \
+# --genomeFastaFiles /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/mm39/Mus_musculus.GRCm39.dna_rm.primary_assembly.fa \
+# --sjdbGTFfile /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/mm39/Mus_musculus.GRCm39.109.gtf \
+# --sjdbOverhang 49
+
+## 1. align human probes against human genome (GRCh38)
+cd /project/RDS-SMS-FFbigdata-RW/spatial_transcriptomics/xenograft
+
+STAR --genomeDir /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/STAR_index_grc38/ \
+--runThreadN 6 \
+--readFilesIn human_v2_probes.fasta \
+--outFileNamePrefix ./results/STAR/human_map_human \
+--outSAMtype BAM SortedByCoordinate \
+--outSAMunmapped Within \
+--outSAMattributes Standard 
+
+
+# 2. align mouse probes against human genome (GRCh38)
+STAR --genomeDir /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/STAR_index_grc38/ \
+--runThreadN 6 \
+--readFilesIn mouse_v1_probes.fasta \
+--outFileNamePrefix ./results/STAR/mouse_map_human \
+--outSAMtype BAM SortedByCoordinate \
+--outSAMunmapped Within \
+--outSAMattributes Standard 
+
+## NOTE STAR output - 
+# The mapping quality MAPQ (column 5) is 255 for uniquely mapping reads, and int(-10*log10(1-1/Nmap)) for multi-mapping reads.
+cd /project/RDS-SMS-FFbigdata-RW/spatial_transcriptomics/xenograft/results/STAR
+
+# 3. Convert BAM files to BED, subset .fasta file for mapped sequence and add BED file
+# human to human
+bedtools bamtobed -i human_map_humanAligned.sortedByCoord.out.bam >> tmp.bed
+bedtools getfasta -fi /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/Homo_sapiens.GRCh38.dna.primary_assembly.fa \
+	-bed tmp.bed \
+	-fo human_map_humanAligned.sortedByCoord.fa.out 
+
+awk 'NR%2==0' human_map_humanAligned.sortedByCoord.fa.out | cut -c -50 > tmp
+paste -d' ' tmp.bed tmp > human_map_humanAligned.sortedByCoord.out.bed
+
+# human to mouse
+bedtools bamtobed -i mouse_map_humanAligned.sortedByCoord.out.bam >> tmp.bed
+bedtools getfasta -fi /project/RDS-SMS-FFbigdata-RW/local_lib/genomes/ensemble/grch38/Homo_sapiens.GRCh38.dna.primary_assembly.fa  \
+	-bed tmp.bed \
+	-fo human_map_humanAligned.sortedByCoord.fa.out 
+
+awk 'NR%2==0' human_map_humanAligned.sortedByCoord.fa.out | cut -c -50 > tmp
+paste -d' ' tmp.bed tmp > mouse_map_humanAligned.sortedByCoord.out.bed
+
+
+
+
+
+
