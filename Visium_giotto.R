@@ -148,11 +148,11 @@ SN_vis = subsetGiotto(testcombo, cell_ids = in_SN)
 LC_vis = subsetGiotto(testcombo, cell_ids = in_VTA)
 
 ## visualize
-spatPlot2D(gobject = SN_vis, group_by = 'list_ID', cell_color = 'nr_feats', color_as_factor = F, 
-           point_size = 1, save_param = list(save_name = "2b_plot"))
-spatPlot2D(gobject = LC_vis, group_by = 'list_ID', cell_color = 'nr_feats', color_as_factor = F, 
-           point_size = 1, save_param = list(save_name = "2c_plot"))
-
+# spatPlot2D(gobject = SN_vis, group_by = 'list_ID', cell_color = 'nr_feats', color_as_factor = F, 
+#            point_size = 1, save_param = list(save_name = "2b_plot"))
+# spatPlot2D(gobject = LC_vis, group_by = 'list_ID', cell_color = 'nr_feats', color_as_factor = F, 
+#            point_size = 1, save_param = list(save_name = "2c_plot"))
+# 
 
 ##### Part C. Dimension Reduction and clustering
 # Substantia Nigra
@@ -263,13 +263,9 @@ for (i in 1:length(split_list)){
 ### Marker genes of neuron subtypes ###
 #######################################
 GenewiseCounts <- as.matrix(get_expression_values(SN_vis, output = "matrix",values = "scaled"))
-genes_interest <- c("GAL","NPY","ADORA1","ADORA2A","ADORA2B","ALDH1A1","CALB1")
+genes_interest <- c("GAL","NPY","ADRA1A","ADRA2A","ALDH1A1","CALB1","TH")
 
 #row.names(GenewiseCounts )[grep("ADOR",row.names(GenewiseCounts ))]
-
-spatFeatPlot2D(SN_vis, expression_values = 'scaled',
-               feats = genes_interest, point_size = 0.5)
-               
 
 # visulaize 
 d <- 1:length(genes_interest)
