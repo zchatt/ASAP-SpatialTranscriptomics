@@ -44,7 +44,7 @@ To run the script, follow these steps:
 
 ## Geomx_giotto.R: GeoMx Data Processing and Analysis
 ### Overview
-This scrips is designed to analyze GeoMx spatial transcriptomics data produced by NanoString consisting spatial "Areas of Interest" (AOIs).
+This script is designed to analyze GeoMx spatial transcriptomics data produced by NanoString consisting spatial "Areas of Interest" (AOIs).
 
 The script performs similar steps to , with some modifications to accommodate the GeoMx data:
 
@@ -74,6 +74,12 @@ To run the script, follow these steps:
 4. Run the script using an R environment or an integrated development environment (IDE).
 
 5. Review the generated results and output files for further analysis.
+
+## Xenograft
+These scripts identify Visium human probes (v2.0) that are capable of quantifying mouse transcripts from the mouse tissue of Xenografts run on the Visium 10X human array.
+
+The probe set "Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv" can be passed to "spaceranger count" function.
+
 
 ### License
 This project is licensed under the MIT License.
