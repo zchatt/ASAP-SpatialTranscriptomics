@@ -156,7 +156,7 @@ region <- rep("unspliced",length(gene_id)) #NOTE this is not correct, need to ge
 
 tmp <- cbind(gene_id,probe_seq,probe_id,included,region)
 
-write.table(,file="Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv", sep=',', quote=F,row.names = F)
+write.table(tmp,file="Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv", sep=',', quote=F,row.names = F)
 
 # NOTE; Xenograft samples will be aligned twice, once using standard human V2 probeset and again using mouse applicable probe set
 # spaceranger count \
