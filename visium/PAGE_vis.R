@@ -54,3 +54,12 @@ brain.merge <- AddMetaData(brain.merge,
 
 # save
 save(paste0(basename(analysis_dir),"_merged.seurat.Rdata"))
+
+
+############################################################################################
+#### Part 2 : Plotting
+############################################################################################
+
+# extract PAGE results
+page_dat
+

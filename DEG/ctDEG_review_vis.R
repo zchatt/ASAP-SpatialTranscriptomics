@@ -177,11 +177,6 @@ myRCTD <- run.CSIDE.regions(myRCTD, X, barcodes,
 
 saveRDS(myRCTD,file.path(savedir,'myRCTDde_visium_SN_regions.rds'))
 
-
-
-
-
-
 ############################################################################################
 ###### Part 3: TOAST using PAGE reference
 ############################################################################################

@@ -33,6 +33,13 @@ if(packageVersion("GeomxTools") > "2.1" &
 ############################################################################################
 #### Inputs
 ############################################################################################
+# # Locally produced data from human
+run_name = "geomx_sep2023"
+analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis"
+dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/DCC_Files"
+PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/pkcs/Hs_R_NGS_WTA_v1.0.pkc"
+SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/Annotations_remapped.xlsx"
+
 # # Locally produced data from Substantia Nigra
 # run_name = "CHA12467"
 # analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/analysis"
@@ -40,16 +47,16 @@ if(packageVersion("GeomxTools") > "2.1" &
 # PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/pkcs/Hs_R_NGS_WTA_v1.0.pkc"
 # SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/Annotations.xlsx"
 
-# # Nanotring produced data from Cortex
-run_name = "hu_brain_001"
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/analysis"
-dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/workflow/dcc/run1_DCC"
-PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/workflow/pkc/Hs_R_NGS_WTA_v1.0.pkc"
-SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/Annotations_run1.xls"
+# # # Nanotring produced data from Cortex
+# run_name = "hu_brain_001"
+# analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/analysis"
+# dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/workflow/dcc/run1_DCC"
+# PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/workflow/pkc/Hs_R_NGS_WTA_v1.0.pkc"
+# SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/Annotations_run1.xls"
 
 ## thresholds
-target_genes_detected_samples.frac = 0.05
-min_genes_detected.frac = 0.05
+target_genes_detected_samples.frac = 0 # formally set as 0.1
+min_genes_detected.frac = 0.01 # formally set as 0.1
 
 ############################################################################################
 #### Run
@@ -61,7 +68,7 @@ DCCFiles <- dir(file.path(dcc_file_dir), pattern = ".dcc$", full.names = TRUE, r
 
 # load data
 # NOTE: the data columns of interest need to be present within the SampleAnnotationFile. QC plots will be made for each.
-data_cols_interest <- c("aoi", "roi","Brainbank_ID","Diagnosis","Brainregion","DV200")
+data_cols_interest <- c("roi","aoi","area","Brainbank_ID","AOI","Brainregion","Brainregion_2","PMD hs","Archive ys-2023","DV200","IHC-score","Age ","Sex","Fam","Diagnosis_Broad","Brainbank","Diagnosis")
 demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
                          pkcFiles = PKCFiles,
                          phenoDataFile = SampleAnnotationFile,
@@ -83,6 +90,9 @@ demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
 # Shift counts to one
 demoData <- shiftCountsOne(demoData, useDALogic = TRUE)
 
+# assign data for visium selection
+demoData_vis <- demoData
+
 # Select Segment QC
 # Default QC cutoffs are commented in () adjacent to the respective parameters
 QC_params <-
@@ -97,7 +107,7 @@ QC_params <-
        minArea = 1000          # Minimum segment area (1000)
        )
 
-demoData <-setSegmentQCFlags(demoData, qcCutoffs = QC_params)        
+demoData <- setSegmentQCFlags(demoData, qcCutoffs = QC_params)        
 
 # Define Modules Used
 pkcs <- annotation(demoData)
@@ -150,7 +160,9 @@ qc_hist4 <- QC_histogram(sData(demoData), "Saturated (%)", col_by, 50) +
   labs(title = "Sequencing Saturation (%)",
        x = "Sequencing Saturation (%)")
 ggsave("qc_4_hist.saturation.png",qc_hist4, device = "png")
-qc_hist5 <- QC_histogram(sData(demoData), "area", col_by, 1000, scale_trans = "log10")
+dplot <- sData(demoData)
+dplot$area <- as.numeric(dplot$area)
+qc_hist5 <- QC_histogram(dplot, "area", col_by,1000, scale_trans = "log10")
 ggsave("qc_5_hist.area.png",qc_hist5, device = "png")
 
 
@@ -170,6 +182,8 @@ for(ann in negCols) {
   plt <- QC_histogram(pData(demoData), ann, col_by, 2, scale_trans = "log10")
   print(plt)
 }
+
+ggsave("qc_5b_hist.geomean.png",plt, device = "png")
 
 # detatch neg_geomean columns ahead of aggregateCounts call
 pData(demoData) <- pData(demoData)[, !colnames(pData(demoData)) %in% negCols]
@@ -217,8 +231,8 @@ demoData <- ProbeQCPassed
 length(unique(featureData(demoData)[["TargetName"]]))
 
 # collapse to targets
-target_demoData <- aggregateCounts(demoData)
-dim(target_demoData)
+gxdat <- aggregateCounts(demoData)
+dim(gxdat)
 
 # Limit of Quantification
 # Define LOQ SD threshold and minimum value
@@ -226,47 +240,47 @@ cutoff <- 2
 minLOQ <- 2
 
 # Calculate LOQ per module tested
-LOQ <- data.frame(row.names = colnames(target_demoData))
+LOQ <- data.frame(row.names = colnames(gxdat))
 for(module in modules) {
   vars <- paste0(c("NegGeoMean_", "NegGeoSD_"),
                  module)
-  if(all(vars[1:2] %in% colnames(pData(target_demoData)))) {
+  if(all(vars[1:2] %in% colnames(pData(gxdat)))) {
     LOQ[, module] <-
       pmax(minLOQ,
-           pData(target_demoData)[, vars[1]] * 
-             pData(target_demoData)[, vars[2]] ^ cutoff)
+           pData(gxdat)[, vars[1]] * 
+             pData(gxdat)[, vars[2]] ^ cutoff)
   }
 }
-pData(target_demoData)$LOQ <- LOQ
+pData(gxdat)$LOQ <- LOQ
 
 ## Filtering
 LOQ_Mat <- c()
 for(module in modules) {
-  ind <- fData(target_demoData)$Module == module
-  Mat_i <- t(esApply(target_demoData[ind, ], MARGIN = 1,
+  ind <- fData(gxdat)$Module == module
+  Mat_i <- t(esApply(gxdat[ind, ], MARGIN = 1,
                      FUN = function(x) {
                        x > LOQ[, module]
                      }))
   LOQ_Mat <- rbind(LOQ_Mat, Mat_i)
 }
 # ensure ordering since this is stored outside of the geomxSet
-LOQ_Mat <- LOQ_Mat[fData(target_demoData)$TargetName, ]
+LOQ_Mat <- LOQ_Mat[fData(gxdat)$TargetName, ]
 
 # Segment Gene Detection
 # Save detection rate information to pheno data
-pData(target_demoData)$GenesDetected <- 
+pData(gxdat)$GenesDetected <- 
   colSums(LOQ_Mat, na.rm = TRUE)
-pData(target_demoData)$GeneDetectionRate <-
-  pData(target_demoData)$GenesDetected / nrow(target_demoData)
+pData(gxdat)$GeneDetectionRate <-
+  pData(gxdat)$GenesDetected / nrow(gxdat)
 
 # Determine detection thresholds:<1%,2%,3%,4%, 5%, 10%, 15%, >15%
-pData(target_demoData)$DetectionThreshold <- 
-  cut(pData(target_demoData)$GeneDetectionRate,
+pData(gxdat)$DetectionThreshold <- 
+  cut(pData(gxdat)$GeneDetectionRate,
       breaks = c(0, 0.01, 0.02,0.03, 0.05, 0.1, 0.15, 1),
       labels = c("<1%", "2%","3%","4%", "5-10%", "10-15%", ">15%"))
 
 # stacked bar plot of different cut points (1%, 5%, 10%, 15%)
-qc_gd_bar <- ggplot(pData(target_demoData),
+qc_gd_bar <- ggplot(pData(gxdat),
        aes(x = DetectionThreshold)) +
   geom_bar(aes(fill = segment)) +
   geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
@@ -279,17 +293,26 @@ qc_gd_bar <- ggplot(pData(target_demoData),
 ggsave("qc_7_bar.genedetection.png",qc_gd_bar,device = "png")
 
 # plots prior to segment removal
-dplot <- pData(target_demoData)
+dplot <- pData(gxdat)
 col_names <- colnames(dplot)
 for(column in data_cols_interest) {
-  col_number = which(colnames(protocolData(target_demoData)) == column)
-  dplot <- cbind(dplot,protocolData(target_demoData)[[col_number]])
+  col_number = which(colnames(protocolData(gxdat)) == column)
+  dplot <- cbind(dplot,protocolData(gxdat)[[col_number]])
 }
-colnames(dplot) <- c(col_names,data_cols_interest)
+colnames(dplot) <- make.names(c(col_names,data_cols_interest))
+dplot$roi_id <- row.names(dplot)
+dplot$area <- as.numeric(dplot$area)
+dplot$DV200 <- as.numeric(dplot$DV200)
+dplot$Age <- as.numeric(dplot$Age)
+  
+# create DV200 and area bins
+dplot <- dplot %>% mutate(dv200_bin = cut(DV200, breaks=5))
+dplot <- dplot %>% mutate(area_bin = cut(area, breaks=5))
 
+# plots
 a <- labels2colors(dplot$Brainregion)
 a <- a[order(dplot$GeneDetectionRate)]
-qc_gd_1 <- ggplot(dplot, aes(x = reorder(roi, GeneDetectionRate), y = GeneDetectionRate*100, fill = segment)) + 
+qc_gd_1 <- ggplot(dplot, aes(x = reorder(roi_id, GeneDetectionRate), y = GeneDetectionRate * 100, fill = segment)) + 
   geom_bar(stat = "identity") + ylab("Gene Detection Rate (%)") + xlab("ROI") + theme_bw() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,colour = a, size=5)) + ggtitle("xlabels = Brainregion") +
   geom_hline(yintercept = min_genes_detected.frac * 100)
@@ -297,7 +320,7 @@ ggsave("qc_8_bar.genedetection.png",qc_gd_1,device = "png")
 
 a <- labels2colors(dplot$Brainbank_ID)
 a <- a[order(dplot$GeneDetectionRate)]
-qc_gd_2 <-ggplot(dplot, aes(x = reorder(roi, GeneDetectionRate), y = GeneDetectionRate*100, fill = segment)) + 
+qc_gd_2 <-ggplot(dplot, aes(x = reorder(roi_id, GeneDetectionRate), y = GeneDetectionRate * 100, fill = segment)) + 
   geom_bar(stat = "identity") + ylab("Gene Detection Rate (%)") + xlab("ROI") + theme_bw() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,colour = a, size=5)) + ggtitle("xlabels = Brainbank_ID") +
   geom_hline(yintercept = min_genes_detected.frac * 100)
@@ -305,30 +328,82 @@ ggsave("qc_9_bar.genedetection.png",qc_gd_2,device = "png")
 
 a <- labels2colors(dplot$Diagnosis)
 a <- a[order(dplot$GeneDetectionRate)]
-qc_gd_3 <-ggplot(dplot, aes(x = reorder(roi, GeneDetectionRate), y = GeneDetectionRate*100, fill = segment)) + 
+qc_gd_3 <-ggplot(dplot, aes(x = reorder(roi_id, GeneDetectionRate), y = GeneDetectionRate * 100, fill = segment)) + 
   geom_bar(stat = "identity") + ylab("Gene Detection Rate (%)") + xlab("ROI") + theme_bw() +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,colour = a, size=5)) + ggtitle("xlabels = Diagnosis") +
   geom_hline(yintercept = min_genes_detected.frac * 100)
 ggsave("qc_10_bar.genedetection.png",qc_gd_3,device = "png") 
 
-qc_gd_4 <- ggplot(dplot, aes(x=as.character(DV200), y = GeneDetectionRate*100, fill=segment)) + 
-  geom_boxplot() + ylab("Gene Detection Rate (%)") + 
-  stat_compare_means( label = "p.format", method="wilcox.test", hide.ns=T, paired=F)
+dplot$DV200 <- round(as.numeric(dplot$DV200),2)
+qc_gd_4 <- ggplot(dplot, aes(x=reorder(DV200, -DV200), y = GeneDetectionRate * 100, fill=segment)) + 
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("DV200") +
+  scale_x_discrete(guide = guide_axis(angle = 45))
 ggsave("qc_11_box.genedetection.png",qc_gd_4,device = "png")
 
+qc_gd_4b <- ggplot(dplot, aes(x=reorder(Brainbank_ID, -DV200), y = GeneDetectionRate * 100, fill=segment)) + 
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Brainbank ID") +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+ggsave("qc_11b_box.genedetection.png",qc_gd_4b,device = "png")
 
-# remove segments with less than 5% of the genes detected.
-target_demoData <-
-  target_demoData[, pData(target_demoData)$GeneDetectionRate >= min_genes_detected.frac ]
 
-dim(target_demoData)
+qc_gd_4c <- ggplot(dplot, aes(x=reorder(Diagnosis, GeneDetectionRate), y = GeneDetectionRate * 100, fill=segment)) + 
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Diagnosis") +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+ggsave("qc_11c_box.genedetection_dx.png",qc_gd_4c,device = "png")
+
+
+qc_gd_4d <- ggplot(dplot, aes(x=area_bin, y = GeneDetectionRate * 100, fill=segment)) + 
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Area") +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+ggsave("qc_11d_box.genedetection_area.png",qc_gd_4d,device = "png")
+
+
+qc_gd_4e <- ggplot(dplot, aes(x=dv200_bin, y = GeneDetectionRate * 100, fill=segment)) + 
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("DV200") +
+  scale_x_discrete(guide = guide_axis(angle = 45))
+ggsave("qc_11e_box.genedetection_dv200.png",qc_gd_4e,device = "png")
+
+# # sequencing data plots
+# dplot <- sData(demoData)
+# dplot$`Saturated (%)` <- as.numeric(unlist(dplot$`Saturated (%)`))
+# 
+# colnames(dplot) <- make.names(colnames(dplot))
+
+# # targeted depth of sequencing; geometric mean of the >95% of saturated samples
+# target_depth <- exp(mean(log(dplot$Raw[which(dplot$Saturated.... > 95)])))
+# 
+# qc_gd_4g <- ggplot(dplot, aes(x=Raw, y = Saturated....)) + 
+#   geom_point() + ylab("Saturation (%)") + xlab("Raw Reads") +
+#   geom_vline(xintercept = target_depth, col="red", lty =2)
+#   
+# ggsave("qc_11g_scatter.sat.depth.png",qc_gd_4g,device = "png") 
+# 
+# # estimate new depth of re-sequencing based on past efficiency
+# new_depth <- 1.6 * 10^9 * 7
+# old_depth <- sum(dplot$Raw)
+# efficiency <- dplot$Raw / old_depth
+# 
+# new_raw <- as.data.frame( dplot$Raw + (efficiency * new_depth))
+# table(new_raw[,1] > target_depth) / length(new_raw[,1])
+# colnames(new_raw) <- "depth"
+# 
+# qc_gd_4h <- ggplot(new_raw, aes(x=depth)) + geom_histogram() +
+#   geom_vline(aes(xintercept=target_depth),color="red", linetype="dashed", size=0.5) +
+#   scale_x_continuous(trans='log10') + theme_bw()
+# 
+# ggsave("qc_11h_reseq.depth.png",qc_gd_4h,device = "png") 
+
+# remove segments with less than min genes detected threshold
+gxdat <- gxdat[, pData(gxdat)$GeneDetectionRate >= min_genes_detected.frac ]
+
+dim(gxdat)
 
 #Gene Detection Rate
 # Calculate detection rate:
-LOQ_Mat <- LOQ_Mat[, colnames(target_demoData)]
-fData(target_demoData)$DetectedSegments <- rowSums(LOQ_Mat, na.rm = TRUE)
-fData(target_demoData)$DetectionRate <-
-  fData(target_demoData)$DetectedSegments / nrow(pData(target_demoData))
+LOQ_Mat <- LOQ_Mat[, colnames(gxdat)]
+fData(gxdat)$DetectedSegments <- rowSums(LOQ_Mat, na.rm = TRUE)
+fData(gxdat)$DetectionRate <-
+  fData(gxdat)$DetectedSegments / nrow(pData(gxdat))
 
 # Test genes of relevance to Brain and PD
 # Using Neuron markers DaN markers as well as top DEGs identified across cell-types in Smajić et al., Brain, 2022
@@ -338,19 +413,19 @@ goi <- c("CALB1","TH","CADPS2",
          "H2AC6","CFAP157", "SLC4A11", "CIITA")
 goi_df <- data.frame(
   Gene = goi,
-  Number_of_Segments = fData(target_demoData)[goi, "DetectedSegments"],
-  DetectionRate = percent(fData(target_demoData)[goi, "DetectionRate"]))
+  Number_of_Segments = fData(gxdat)[goi, "DetectedSegments"],
+  DetectionRate = percent(fData(gxdat)[goi, "DetectionRate"]))
 
 ss <- tableGrob(goi_df)
 ggsave("qc_12_table.relevantgenes..png",ss,device = "png")
 
 # Gene Filtering
 # Plot detection rate:
-plot_detect <- data.frame(Freq = c(1, 5, 10, 20, 30, 50))
+plot_detect <- data.frame(Freq = c(0.5,1, 5, 10, 20, 30, 50))
 plot_detect$Number <-
-  unlist(lapply(c(0.01, 0.05, 0.1, 0.2, 0.3, 0.5),
-                function(x) {sum(fData(target_demoData)$DetectionRate >= x)}))
-plot_detect$Rate <- plot_detect$Number / nrow(fData(target_demoData))
+  unlist(lapply(c(0.005,0.01, 0.05, 0.1, 0.2, 0.3, 0.5),
+                function(x) {sum(fData(gxdat)$DetectionRate >= x)}))
+plot_detect$Rate <- plot_detect$Number / nrow(fData(gxdat))
 rownames(plot_detect) <- plot_detect$Freq
 
 gdr_bar <- ggplot(plot_detect, aes(x = as.factor(Freq), y = Rate, fill = Rate)) +
@@ -370,12 +445,139 @@ ggsave("qc_13_bar.genesdetected.png",gdr_bar,device = "png")
 
 # Subset to target genes detected in at least X% of the samples.
 #   Also manually include the negative control probe, for downstream use
-negativeProbefData <- subset(fData(target_demoData), CodeClass == "Negative")
+negativeProbefData <- subset(fData(gxdat), CodeClass == "Negative")
 neg_probes <- unique(negativeProbefData$TargetName)
-target_demoData <- 
-  target_demoData[fData(target_demoData)$DetectionRate >= target_genes_detected_samples.frac |
-                    fData(target_demoData)$TargetName %in% neg_probes, ]
-dim(target_demoData)
+gxdat <- 
+  gxdat[fData(gxdat)$DetectionRate >= target_genes_detected_samples.frac &
+                    !(fData(gxdat)$TargetName %in% neg_probes), ]
+dim(gxdat)
 
 # Write samples that pass quality control to file
-save(target_demoData,file=paste0(run_name,"_qc.gx.Rdata"))
+save(gxdat,file=paste0(run_name,"_gt",target_genes_detected_samples.frac,".gs",min_genes_detected.frac,"_qc.gx.Rdata"))
+
+# #### selection of samples for visium analysis - done from n=901 data
+# # scale DV200 and gene detected
+# dplot <- sData(demoData)
+# dplot$scaled_DV200<- scale(as.numeric(dplot$DV200))
+# dplot$GenesDetected <- pData(gxdat)$GenesDetected
+# dplot$scaled_GenesDetected <- scale(pData(gxdat)$GenesDetected)
+# 
+# # aggregate
+# library(dplyr)
+# mdat <- dplot %>%
+#   group_by(Brainbank_ID) %>%
+#   summarise_at(vars(scaled_DV200,scaled_GenesDetected), list(name = mean))
+# 
+# mdat <- as.data.frame(mdat)
+# 
+# var1 <- c("Brainbank_ID","Brainregion","PMD hs","Archive ys-2023", "Age", "Sex","Fam","Diagnosis Broad","Diagnosis","DV200","GenesDetected")
+# tmp <- merge(mdat, dplot[,var1], by="Brainbank_ID", all.y = FALSE)
+# tmp <- tmp[!duplicated(tmp$Brainbank_ID),]
+# 
+# tmp$dv200.gd_rank <- tmp$scaled_DV200_name + tmp$scaled_GenesDetected
+# 
+# tmp <- tmp[order(-tmp$dv200.gd_rank),]
+# 
+# write.table(tmp,file="summarised_geomx_qc_120923.txt",sep="\t",quote = F,row.names = F)
+# 
+# # manually select patients balancing for Dx (CTR, ePD, lPD and ILBD), Sex, brain region
+# tmp2 <- read.delim(file="summarised_geomx_qc_120923_select.txt")
+# 
+# tmp2[tmp2$visium_round1 == "Y",] %>%
+#   group_by(Diagnosis,Sex,Brainregion) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y",] %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y",] %>%
+#   group_by(Brainregion) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y",] %>%
+#   group_by(Sex) %>%
+#   dplyr::summarise(n = n())
+
+# 
+# ##### tabulation of cohort statistics
+# # create a glm of cohort stats
+# library(stargazer)
+# 
+# dplot$Sex[dplot$Sex %in% c("male","Male")] <- "M"
+# dplot$Sex[dplot$Sex %in% c("female","Female")] <- "F"
+# dplot$Diagnosis <- as.factor(dplot$Diagnosis)
+# 
+# lm.model <- glm(Diagnosis ~ Age + Sex + DV200 + area,family = binomial , data=dplot)
+# 
+# # print glm to file
+# stargazer(lm.model, title="Results", align=TRUE, out="star_descriptive.doc",type = "html")
+# 
+# ## tabulate data for tables
+# tmp <- dplot[!duplicated(dplot$Brainbank),]
+# 
+# # cases 
+# tmp %>%
+#   group_by(Diagnosis,Brainregion) %>%
+#   dplyr::summarise(count = n_distinct(roi_id))
+# 
+# # Age 
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(mean_age = mean(Age,na.rm=TRUE))
+# 
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(sd_age = sd(Age,na.rm=TRUE))
+# 
+# #Sex
+# tmp %>%
+#   group_by(Diagnosis,Sex) %>%
+#   dplyr::summarise(count = n_distinct(Brainbank_ID))
+# 
+# # Dv200
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(mean_dv200 = mean(DV200,na.rm=TRUE))
+# 
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
+# 
+# # Area
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(mean_area = mean(area,na.rm=TRUE))
+# 
+# tmp %>%
+#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
+
+
+# ## tabulate data following ROI removal
+# dplot <- pData(gxdat)
+# col_names <- colnames(dplot)
+# for(column in data_cols_interest) {
+#   col_number = which(colnames(protocolData(gxdat)) == column)
+#   dplot <- cbind(dplot,protocolData(gxdat)[[col_number]])
+# }
+# colnames(dplot) <- make.names(c(col_names,data_cols_interest))
+# dplot$roi_id <- row.names(dplot)
+# dplot$area <- as.numeric(dplot$area)
+# dplot$DV200 <- as.numeric(dplot$DV200)
+# dplot$Age <- as.numeric(dplot$Age)
+# 
+# # create DV200 and area bins
+# dplot <- dplot %>% mutate(dv200_bin = cut(DV200, breaks=5))
+# dplot <- dplot %>% mutate(area_bin = cut(area, breaks=5))
+# 
+# # cases
+# dplot %>%
+#   group_by(Diagnosis,Brainregion) %>%
+#   dplyr::summarise(count = n_distinct(roi_id))
