@@ -480,24 +480,25 @@ save(gxdat,file=paste0(run_name,"_gt",target_genes_detected_samples.frac,".gs",m
 # 
 # write.table(tmp,file="summarised_geomx_qc_120923.txt",sep="\t",quote = F,row.names = F)
 # 
-# # manually select patients balancing for Dx (CTR, ePD, lPD and ILBD), Sex, brain region
-# tmp2 <- read.delim(file="summarised_geomx_qc_120923_select.txt")
-# 
-# tmp2[tmp2$visium_round1 == "Y",] %>%
-#   group_by(Diagnosis,Sex,Brainregion) %>%
-#   dplyr::summarise(n = n())
-# 
-# tmp2[tmp2$visium_round1 == "Y",] %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarise(n = n())
-# 
-# tmp2[tmp2$visium_round1 == "Y",] %>%
-#   group_by(Brainregion) %>%
-#   dplyr::summarise(n = n())
-# 
-# tmp2[tmp2$visium_round1 == "Y",] %>%
-#   group_by(Sex) %>%
-#   dplyr::summarise(n = n())
+# manually select patients balancing for Dx (CTR, ePD, lPD and ILBD), Sex, brain region
+setwd(analysis_dir)
+tmp2 <- read_xlsx("summarised_geomx_qc_120923_select.xlsx",1)
+
+tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+  group_by(Diagnosis,Sex,Brainregion) %>%
+  dplyr::summarise(n = n())
+
+tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarise(n = n())
+
+tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+  group_by(Brainregion) %>%
+  dplyr::summarise(n = n())
+
+tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+  group_by(Sex) %>%
+  dplyr::summarise(n = n())
 
 # 
 # ##### tabulation of cohort statistics

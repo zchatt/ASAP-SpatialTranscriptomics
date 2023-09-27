@@ -102,6 +102,17 @@ ggsave("bclus_6_clust.umap.png",
        ggarrange(p2, ncol=1,nrow=1) + bgcolor("white"),
        device = "png")
 
+# variables of interest to overlay
+vars <- c("Diagnosis","Brainregion","Brainbank_ID","Sex")
+px1 <- DimPlot(gxdat_s, reduction = "umap",  group.by=vars[1])
+px2 <- DimPlot(gxdat_s, reduction = "umap",  group.by=vars[2])
+px3 <- DimPlot(gxdat_s, reduction = "umap",  group.by=vars[3])
+px4 <- DimPlot(gxdat_s, reduction = "umap",  group.by=vars[4])
+
+ggsave("bclus_x.umap.png",
+       ggarrange(px1,px2,px3,px4, ncol=1,nrow=1) + bgcolor("white"),
+       device = "png")
+
 
 # save data
 save(gxdat_s, file = paste0(run_name,"_seurat.Rdata"))

@@ -1,0 +1,14 @@
+name: giotto_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - pip=20.3
+  - pandas
+  - networkx
+  - python-igraph
+  - leidenalg
+  - python-louvain
+  - python.app
+  - scikit-learn
+prefix: /Users/zacc/opt/anaconda3/envs/giotto_env

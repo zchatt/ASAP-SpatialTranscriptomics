@@ -2,14 +2,37 @@
 # Run on Macbook Pro (Apple M2 Max) with MacOS Ventura Version 13.5.
 
 # set python paths
-my_python_path = '/Users/zacc/opt/anaconda3/envs/py311/bin/python'
+my_python_path = '/Users/zacc/opt/anaconda3/envs/giotto_env/bin/python'
 Sys.setenv(RETICULATE_PYTHON = my_python_path)
 RETICULATE_PYTHON=my_python_path
 
 # load
-library(Giotto)
-my_instructions = createGiottoInstructions(python_path = my_python_path)
+library(devtools)
 
+# Ensure Giotto Suite is installed
+if(!"Giotto" %in% installed.packages()) {
+  devtools::install_github("drieslab/Giotto@suite")
+}
+library(Giotto)
+
+if(!"GiottoUtils" %in% installed.packages()) {
+  devtools::install_github("drieslab/GiottoUtils")
+}
+library(GiottoUtils)
+
+if(!"GiottoClass" %in% installed.packages()) {
+  devtools::install_github("drieslab/GiottoClass")
+}
+library(GiottoClass)
+
+# Ensure the Python environment for Giotto has been installed
+genv_exists = checkGiottoEnvironment()
+if(!genv_exists){
+  # The following command need only be run once to install the Giotto environment
+  installGiottoEnvironment()
+}
+
+my_instructions = createGiottoInstructions(python_path = my_python_path)
  
 # # load
 # library(reticulate)
