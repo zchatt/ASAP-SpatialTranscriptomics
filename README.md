@@ -6,11 +6,7 @@ NOTE: This repo currently in development and likely to change frequently
  
 ## Data Processing and Analysis for 10X Visium
 ### Overview
-This script utilizes several popular packages for analyzing spatial transcriptomic data including 
-
-[Seurat](https://satijalab.org/seurat/)
-[Giotto](https://giottosuite.readthedocs.io/en/latest/index.html)
-[spacxr](https://github.com/dmcable/spacexr)
+The scripts utilize several popular packages for analyzing spatial transcriptomic data including [Seurat](https://satijalab.org/seurat/), [Giotto](https://giottosuite.readthedocs.io/en/latest/index.html) and [spacxr](https://github.com/dmcable/spacexr)
 
 The scripts are designed to perform various analyses on Visium data, including data preprocessing, dimension reduction, clustering, cell-type enrichment and cell-type differentially expressed genes (ctDEG's) analysis.
 
@@ -45,11 +41,7 @@ To run the script, follow these steps:
 
 ## Data Processing and Analysis for Nanostring GeoMx
 ### Overview
-This script utilizes several popular packages for analyzing spatial transcriptomic data including 
-
-[Seurat](https://satijalab.org/seurat/)
-[Giotto](https://giottosuite.readthedocs.io/en/latest/index.html)
-[spacxr](https://github.com/dmcable/spacexr)
+The scripts utilize several popular packages for analyzing spatial transcriptomic data including [Seurat](https://satijalab.org/seurat/), [Giotto](https://giottosuite.readthedocs.io/en/latest/index.html) and [spacxr](https://github.com/dmcable/spacexr)
 
 The scripts are designed to perform various analyses on Visium data, including data preprocessing, dimension reduction, clustering, cell-type enrichment and cell-type differentially expressed genes (ctDEG's) analysis.
 
