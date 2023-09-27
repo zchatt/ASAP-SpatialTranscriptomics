@@ -75,7 +75,7 @@ To run the script, follow these steps:
 
 
 ## Xenograft
-This is a collection of scripts to perform for ST and scnRNAseq analysis in xenografts.
+This is a collection of scripts to perform ST and scnRNAseq analysis in xenografts.
 
 1. [human_probe_mm_vis.R](/xenograft/human_probe_mm_vis.R) - Scripts to identify Visium human probes (v2.0) that are capable of quantifying mouse transcripts from the mouse tissue of Xenografts run on the Visium 10X human array. Note; probes were aligned using [align_species.pbs](/xenograft/align_species.pbs). The probe set [Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv](/xenograft/Visium_Human_mouseapplicable_Transcriptome_Probe_Set_v2.0_GRCh38-2023-A.csv) can be passed to "spaceranger count" function.
 
