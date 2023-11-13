@@ -31,12 +31,12 @@ source("/Users/zacc/github_repo/Giotto/R/utilities.R")
 
 # # # Input
 # # Locally produced data from Substantia Nigra
-# run_name = "CHA12467"
-# analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/analysis"
+run_name = "CHA12467"
+analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/analysis"
 
-run_name <- "hu_brain_001"
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/analysis"
-my_python_path = '/Users/zacc/opt/anaconda3/envs/py311/bin/python'
+# run_name <- "hu_brain_001"
+# analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/analysis"
+# my_python_path = '/Users/zacc/opt/anaconda3/envs/py311/bin/python'
 
 #########
 ## RUN ##

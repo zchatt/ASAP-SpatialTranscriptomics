@@ -34,11 +34,19 @@ if(packageVersion("GeomxTools") > "2.1" &
 #### Inputs
 ############################################################################################
 # # Locally produced data from human
-run_name = "geomx_sep2023"
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis"
-dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/DCC_Files"
+run_name = "geomx_oct2023"
+analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
+dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/DCC_Files"
 PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/pkcs/Hs_R_NGS_WTA_v1.0.pkc"
-SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/Annotations_remapped.xlsx"
+SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/Annotations_remapped.xlsx"
+
+
+# # # Locally produced data from human
+# run_name = "geomx_sep2023"
+# analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis"
+# dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/DCC_Files"
+# PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/pkcs/Hs_R_NGS_WTA_v1.0.pkc"
+# SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/Annotations_remapped.xlsx"
 
 # # Locally produced data from Substantia Nigra
 # run_name = "CHA12467"
@@ -68,7 +76,7 @@ DCCFiles <- dir(file.path(dcc_file_dir), pattern = ".dcc$", full.names = TRUE, r
 
 # load data
 # NOTE: the data columns of interest need to be present within the SampleAnnotationFile. QC plots will be made for each.
-data_cols_interest <- c("roi","aoi","area","Brainbank_ID","AOI","Brainregion","Brainregion_2","PMD hs","Archive ys-2023","DV200","IHC-score","Age ","Sex","Fam","Diagnosis_Broad","Brainbank","Diagnosis")
+data_cols_interest <- c("roi","aoi","area","Brainbank_ID","AOI","Brainregion","Brainregion_2","PMD hs","Archive ys-2023","DV200","IHC-score","Age","Sex","Fam","Diagnosis_Broad","Brainbank","Diagnosis")
 demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
                          pkcFiles = PKCFiles,
                          phenoDataFile = SampleAnnotationFile,
@@ -76,6 +84,10 @@ demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
                          phenoDataDccColName = "Sample_ID",
                          protocolDataColNames = data_cols_interest,
                          experimentDataColNames = c("panel"))
+
+# aggregate counts accross technical replicates
+
+demoData@assayData$exprs <- demoData@assayData$exprs + demoData@assayData$exprs
 
 # # NOTE: tip on accessing data
 # sData(demoData) # sequencing data metrics for each ROI
@@ -480,25 +492,30 @@ save(gxdat,file=paste0(run_name,"_gt",target_genes_detected_samples.frac,".gs",m
 # 
 # write.table(tmp,file="summarised_geomx_qc_120923.txt",sep="\t",quote = F,row.names = F)
 # 
-# manually select patients balancing for Dx (CTR, ePD, lPD and ILBD), Sex, brain region
-setwd(analysis_dir)
-tmp2 <- read_xlsx("summarised_geomx_qc_120923_select.xlsx",1)
+# # manually select patients balancing for Dx (CTR, ePD, lPD and ILBD), Sex, brain region
+# setwd(analysis_dir)
+# tmp2 <- read_xlsx("summarised_geomx_qc_120923_select.xlsx",1)
+# 
+# tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+#   group_by(Diagnosis,Sex,Brainregion) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+#   group_by(Diagnosis) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+#   group_by(Brainregion) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+#   group_by(Sex) %>%
+#   dplyr::summarise(n = n())
+# 
+# tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
+#   group_by(Brainbank_ID2,Diagnosis) %>%
+#   dplyr::summarise(n = n())
 
-tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
-  group_by(Diagnosis,Sex,Brainregion) %>%
-  dplyr::summarise(n = n())
-
-tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
-  group_by(Diagnosis) %>%
-  dplyr::summarise(n = n())
-
-tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
-  group_by(Brainregion) %>%
-  dplyr::summarise(n = n())
-
-tmp2[tmp2$visium_round1 == "Y" | tmp2$visium_round2 == "Y",] %>%
-  group_by(Sex) %>%
-  dplyr::summarise(n = n())
 
 # 
 # ##### tabulation of cohort statistics

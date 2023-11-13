@@ -23,7 +23,7 @@ analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_s
 rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/geomx_sep2023_gt0.gs0.01_qc.gx.Rdata"
 
 ############################################################################################
-#### Part 1 : Convert Seurat and normalise using quantile normalisation method
+#### Part 1 : Convert to Seurat object and quantile normalise
 ############################################################################################
 setwd(analysis_dir)
 # Load qc data generated from geomx_lowlevel.R, should be in "/analysis" of the name "slide.name_qc.gx.Rdata"

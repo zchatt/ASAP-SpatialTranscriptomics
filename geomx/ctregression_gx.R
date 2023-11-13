@@ -18,7 +18,7 @@ norm_weights <- normalize_weights(myRCTD@results$weights)
 meta <- gxdat_s@meta.data[gxdat_s@meta.data$segment.y != "TH" & gxdat_s$Diagnosis != "NTC",]
 meta <- cbind(meta,norm_weights[row.names(meta),])
 
-# setup desing matrix and perform contrast
+# setup design matrix and perform contrast
 brain_regions <- c("A10","A9","A6")
 cell_types <- colnames(norm_weights)
 res_list <- list()
@@ -121,7 +121,7 @@ ggsave("limma_csidecells_a9a10a6.png",
        device = "png")
 
 ############################################################################################
-###### Part 1: Regression analysis of PAGE results; A9 v A10 for each disease stage
+###### Part 2: Regression analysis of PAGE results; A9 v A10 for each disease stage
 ############################################################################################
 ## early changes in cell-types
 meta <- gxdat_s@meta.data[gxdat_s@meta.data$segment.y != "TH" & gxdat_s$Diagnosis %in% c("CTR","ePD","ILBD","lPD"),]

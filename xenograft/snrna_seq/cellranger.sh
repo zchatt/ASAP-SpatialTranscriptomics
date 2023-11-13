@@ -27,7 +27,7 @@
 #################################
 
 #################################
-# ## GPHPC - Ubuntu 22.04 LTS
+# ## GPHPC - Ubuntu 22.04 LTS  - TESTING
 #################################
 # # download and install
 # cd /home/zac/lib
@@ -46,6 +46,9 @@
 # curl -O https://cf.10xgenomics.com/supp/cell-exp/refdata-gex-GRCh38-2020-A.tar.gz
 # tar xvf refdata-gex-GRCh38-2020-A.tar.gz
 
+## index reference
+# cellranger mkref --genome=GRCh38_and_mRatBN7_281023 --fasta=GRCh38_and_mRatBN7/fasta/genome.fa --genes=GRCh38_and_mRatBN7/genes/genes.gtf.gz
+
 # # running with test data  - yes working
 # # # input
 # run_dir="/data/zac/asap_snrnaseq/snrnaseq/test_12w"
@@ -59,31 +62,60 @@
 #    --fastqs=$fastq_files \
 #    --transcriptome="/data/zac/asap_snrnaseq/reference/refdata-gex-GRCh38-2020-A"
 
-# # running with single sample - yes working
-# # input
+#################################
+# ## GPHPC - Ubuntu 22.04 LTS - REAL SAMPLES
+#################################
+# # running with single sample - yes working with human genome, repeating with barnyard genome from 10X (human+mouse) and our own (human+rat)
+export PATH=/home/zac/lib/cellranger-7.1.0:$PATH
 run_dir="/data/zac/asap_snrnaseq/snrnaseq/"
+cd $run_dir
+
+# # 12w_HJ377DRX2 - human/rat - screen -r 1010991
 fastq_files="/data/zac/asap_snrnaseq/snrnaseq/proj-9520_10x_axoalguidance-1128.4.666/AGRF_CAGRF221012416_HJ377DRX2/12w"
-ID="HJ377DRX2_12w"
-export PATH=/home/zac/lib/cellranger-7.1.0:$PATH
+ID="HJ377DRX2_12w_hr"
+transcriptome_ref="/data/zac/asap_snrnaseq/reference/GRCh38_and_mRatBN7_281023"
 
-# run cellranger
-cd $run_dir
-cellranger count --id=run_${ID} \
+cellranger count --id=run_${ID} --localcores 20 --localmem 64 \
    --fastqs=$fastq_files \
-   --transcriptome="/data/zac/asap_snrnaseq/reference/refdata-gex-GRCh38-2020-A"
+   --transcriptome=$transcriptome_ref
 
-# # running all samples
-# # input
-run_dir="/data/zac/asap_snrnaseq/snrnaseq/"
+# # 6w_HJ377DRX2 - human/rat
 fastq_files="/data/zac/asap_snrnaseq/snrnaseq/proj-9520_10x_axoalguidance-1128.4.666/AGRF_CAGRF221012416_HJ377DRX2/6w"
-ID="HJ377DRX2_6w"
-export PATH=/home/zac/lib/cellranger-7.1.0:$PATH
+ID="HJ377DRX2_6w_hr"
 
-# run cellranger
-cd $run_dir
-cellranger count --id=run_${ID} \
+cellranger count --id=run_${ID} --localcores 20 --localmem 64 \
    --fastqs=$fastq_files \
-   --transcriptome="/data/zac/asap_snrnaseq/reference/refdata-gex-GRCh38-2020-A"
+   --transcriptome=$transcriptome_ref
+
+# # 6w_HLNGJDRX2 - human/rat
+fastq_files="/data/zac/asap_snrnaseq/snrnaseq/proj-9520_10x_axoalguidance-1128.4.666/AGRF_CAGRF230213424_HLNGJDRX2/6w"
+ID="HLNGJDRX2_6w_hr"
+
+cellranger count --id=run_${ID} --localcores 20 --localmem 64 \
+   --fastqs=$fastq_files \
+   --transcriptome=$transcriptome_ref
+
+# # 1y_HLNGJDRX2 - human/mouse - DONE
+fastq_files="/data/zac/asap_snrnaseq/snrnaseq/proj-9520_10x_axoalguidance-1128.4.666/AGRF_CAGRF230213424_HLNGJDRX2/1y"
+ID="HLNGJDRX2_1y_hm"
+transcriptome_ref="/data/zac/asap_snrnaseq/reference/refdata-gex-GRCh38-and-mm10-2020-A"
+
+cellranger count --id=run_${ID} --localcores 20 --localmem 64 \
+   --fastqs=$fastq_files \
+   --transcriptome=$transcriptome_ref
+
+# # moved output files to local for downstream R analysis
+# rsync -av zac@10.65.82.197:/data/zac/asap_snrnaseq/snrnaseq/run_HJ377DRX2_12w_hr/ /Users/zacc/USyd/ASAP/snrna_seq/cellranger_out/run_HJ377DRX2_12w_hr --exclude outs/*bam
+# rsync -av zac@10.65.82.197:/data/zac/asap_snrnaseq/snrnaseq/run_HJ377DRX2_6w_hr/ /Users/zacc/USyd/ASAP/snrna_seq/cellranger_out/run_HJ377DRX2_6w_hr --exclude outs/*bam
+# rsync -av zac@10.65.82.197:/data/zac/asap_snrnaseq/snrnaseq/run_HLNGJDRX2_6w_hr/ /Users/zacc/USyd/ASAP/snrna_seq/cellranger_out/run_HLNGJDRX2_6w_hr --exclude outs/*bam
+# rsync -av zac@10.65.82.197:/data/zac/asap_snrnaseq/snrnaseq/run_HLNGJDRX2_1y_hm/ /Users/zacc/USyd/ASAP/snrna_seq/cellranger_out/run_HLNGJDRX2_1y_hm --exclude outs/*bam
+
+
+
+
+
+
+
 
 
 

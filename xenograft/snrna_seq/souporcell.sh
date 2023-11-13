@@ -29,7 +29,6 @@ barcodes_tsv="/data/zac/asap_snrnaseq/souporcell/test_out/GSM2560245_barcodes.ts
 bam_file="/data/zac/asap_snrnaseq/souporcell/test_out/A.merged.bam"
 export SINGULARITY_BIND="/data/zac/"
 
-
 cd $output_dir_name
 
 singularity exec $soup_or_cell_sif souporcell_pipeline.py \
@@ -70,7 +69,7 @@ output_dir_name="/data/zac/asap_snrnaseq/souporcell/run_HJ377DRX2_12w_vcf"
 reference_fasta="/data/zac/asap_snrnaseq/reference/refdata-cellranger-GRCh38-3.0.0/fasta/genome.fa"
 barcodes_tsv="/data/zac/asap_snrnaseq/snrnaseq/run_HJ377DRX2_12w/outs/filtered_feature_bc_matrix/barcodes.tsv"
 bam_file="/data/zac/asap_snrnaseq/snrnaseq/run_HJ377DRX2_12w/outs/possorted_genome_bam.bam"
-vcf="/data/zac/asap_snrnaseq/souporcell/merged_ppmi.feb.1.2015_RM35.vcf"
+vcf="/data/zac/asap_snrnaseq/souporcell/merged_ppmi.feb.1.2015_RM35_2.vcf"
 export SINGULARITY_BIND="/data/zac/"
 
 mkdir -p $output_dir_name
@@ -85,14 +84,6 @@ singularity exec $soup_or_cell_sif souporcell_pipeline.py \
 	-k $num_clusters \
 	--known_genotypes $vcf
 
-
-
-
-
-merged_ppmi.feb.1.2015_RM35.vcf
-
-
-
 ## Potential method to run on USyd artemis cluster
 # Just in case anyone else is trying to run this on a cluster that doesnt enable OverlayFS for Singularity. 
 # Can potentially get around this issue by adding the required paths to the .sif file directly by following advice here - https://stackoverflow.com/questions/67851786/edit-runscript-of-singularity-sif-container-after-building
@@ -104,12 +95,5 @@ merged_ppmi.feb.1.2015_RM35.vcf
 # # 4. convert the sandbox back to a (new) SIF file:
 # sudo singularity build souporcell_latest_custom.sif souporcell_sandbox
 # # note will need to use "module load singularity/3.7.0"
-
-
-
-AAACATTGCATGGT-1
-CGAACGAAAGCC
-AAGGCAGCAGCAAATCCTTCGT
-
 
 

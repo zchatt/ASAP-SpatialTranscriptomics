@@ -1,0 +1,607 @@
+---
+title: 'cellranger and kallisto snRNA-seq integration and normalization'
+output:
+html_document:
+theme: united
+pdf_document: default
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+---
+  
+  ```{r setup, include=FALSE}
+all_times <- list()  # store the time for each chunk
+knitr::knit_hooks$set(time_it = local({
+  now <- NULL
+  function(before, options) {
+    if (before) {
+      now <<- Sys.time()
+    } else {
+      res <- difftime(Sys.time(), now, units = "secs")
+      all_times[[options$label]] <<- res
+    }
+  }
+}))
+knitr::opts_chunk$set(
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 95),
+  fig.width = 10,
+  message = FALSE,
+  warning = FALSE,
+  time_it = TRUE
+)
+```
+
+```{r data, message=FALSE}
+library(Seurat)
+library(patchwork)
+library(Matrix)
+library(tidyverse)
+library(plyr)
+library(ggpubr)
+theme_set(theme_bw())
+
+# Function to read in kallisto - Slightly modified from BUSpaRse
+read_count_output <- function(dir, name) {
+  dir <- normalizePath(dir, mustWork = TRUE)
+  m <- readMM(paste0(dir, "/", name, ".mtx"))
+  m <- Matrix::t(m)
+  m <- as(m, "dgCMatrix")
+  # The matrix read has cells in rows
+  ge <- ".genes.txt"
+  genes <- readLines(file(paste0(dir, "/", name, ge)))
+  barcodes <- readLines(file(paste0(dir, "/", name, ".barcodes.txt")))
+  colnames(m) <- barcodes
+  rownames(m) <- genes
+  return(m)
+}
+
+get_knee_df <- function(mat) {
+  total <- rank <- NULL
+  tibble(total = Matrix::colSums(mat),
+         rank = row_number(desc(total))) %>%
+    distinct() %>%
+    dplyr::filter(total > 0) %>% 
+    arrange(rank)
+}
+
+get_inflection <- function(df, lower = 100) {
+  log_total <- log_rank <- total <-  NULL
+  df_fit <- df %>% 
+    dplyr::filter(total > lower) %>% 
+    transmute(log_total = log10(total),
+              log_rank = log10(rank))
+  d1n <- diff(df_fit$log_total)/diff(df_fit$log_rank)
+  right.edge <- which.min(d1n)
+  10^(df_fit$log_total[right.edge])
+}
+```
+
+```{r define.paths, message=FALSE, warning=FALSE}
+# working directory
+working_dir="/Users/zacc/USyd/ASAP/snrna_seq/analysis"
+setwd(working_dir)
+
+# path of cellranger output
+cellranger_out="/Users/zacc/USyd/ASAP/snrna_seq/cellranger_out"
+
+# path of kallisto output
+kallisto_out="/Users/zacc/USyd/ASAP/snrna_seq/kallisto_out"
+
+# transcript to gene files for kallisto
+tx2gene_GRCh38mm10 <- read.delim("/Users/zacc/USyd/ASAP/snrna_seq/refdata-gex-GRCh38-and-mm10-2020-A_t2g.txt", sep='\t', header=FALSE)
+tx2gene_GRCh38mRatBN7 <- read.delim("/Users/zacc/USyd/ASAP/snrna_seq/refdata-gex-GRCh38_and_mRatBN7_281023_t2g.txt", sep='\t', header=FALSE)
+tx2gene <- rbind(tx2gene_GRCh38mm10,tx2gene_GRCh38mRatBN7)
+
+```
+
+
+```{r cellranger.data, results='hide', message=FALSE, fig.keep='none'}
+# Read in multiple cellranger outputs
+
+# get list of datasets
+matrix_dir = "outs/filtered_feature_bc_matrix"
+cr_dirs <- list.dirs(cellranger_out)
+cr_dirs <- as.list(cr_dirs[grep(matrix_dir,cr_dirs)])
+
+# read in experiments
+cr_dfs <- lapply(cr_dirs, function(x) Read10X(unlist(x)))
+names(cr_dfs) <- gsub("/","",gsub(matrix_dir,"",gsub(cellranger_out,"",cr_dirs)))
+
+# create seurat objects - note I couldn't work out how to unlist & subset on a list of s4 objects in lapply, hence loop.
+cr_so <- list()
+for (i in 1:length(cr_dfs)) {
+  cr_so[[i]] <- CreateSeuratObject(counts = unlist(cr_dfs[i])[[1]], project = names(cr_dfs[i]))
+}
+
+# normalize and identify variable features for each dataset independently
+cr_so <- lapply(X = cr_so, FUN = function(x) {
+  x = x[,unname(which(colSums(GetAssayData(x))!=0))]
+  #x <- SCTransform(x)
+  #x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+
+```
+
+```{r kallisto.data, results='hide', message=FALSE, fig.keep='none'}
+# Read in multiple kallisto outputs
+# get list of datasets
+matrix_dir = "counts_unfiltered"
+k_dirs <- list.dirs(kallisto_out)
+k_dirs <- as.list(k_dirs[grep(matrix_dir,k_dirs)])
+
+# read in experiments and filter. Note cellranger is already filtered
+k_dfs <- lapply(k_dirs, FUN = function(x) {
+  x = read_count_output(unlist(x), name = "cells_x_genes")
+  tot_counts <- colSums(x)
+  knee_df <- get_knee_df(x)
+  inflection <- get_inflection(knee_df)
+  x <- x[, tot_counts > inflection]
+  x <- x[Matrix::rowSums(x) > 0,]
+  
+  # as kallisto uses ensemble id we need to translate transcript ID to gene name
+  #tmp <- mapvalues(gsub("__","_",row.names(x))[1:10],tx2gene$V2,tx2gene$V3)
+  
+})
+names(k_dfs) <- gsub("/","",gsub(matrix_dir,"",gsub(kallisto_out,"",k_dirs)))
+
+# create Seurat objects
+k_so <- list()
+for (i in 1:length(k_dfs)) {
+  k_so[[i]] <- CreateSeuratObject(counts = unlist(k_dfs[i])[[1]], project = names(k_dfs[i]))
+}
+
+# normalize and identify variable features for each dataset independently
+k_so <- lapply(X = k_so, FUN = function(x) {
+  x = x[,unname(which(colSums(GetAssayData(x))!=0))]
+  #x <- SCTransform(x)
+  #x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+
+```
+
+```{r combine.lists, results='hide', message=FALSE, fig.keep='none'}
+# Performing integration on datasets normalized with SCTransform
+# combine seurat lists
+seurat_list <- c(cr_so,k_so)
+# get/ set names
+seurat_names <- paste0(c(rep("cellranger",4),rep("kallisto",4)),sep="_",gsub(".*2_","",c(names(cr_dfs),names(k_dfs))))
+```
+
+```{r qc.sample.filter, results='hide', message=FALSE, fig.keep='none'}
+# Percentage of reads that map to the mitochondrial genome
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    x <- AddMetaData(object = x, metadata = PercentageFeatureSet(x, pattern = "-MT-|-Mt-|-mt-"), col.name = "percent.mt")
+
+})
+
+# Vlnplot of features
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- VlnPlot(seurat_list[[i]], features = c("nFeature_RNA")) +  theme(legend.position = 'none') +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+# Vlnplot of counts
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- VlnPlot(seurat_list[[i]], features = c("nCount_RNA")) +  theme(legend.position = 'none') +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+
+# Vlnplot of percent mt
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- VlnPlot(seurat_list[[i]], features = c("percent.mt")) +  theme(legend.position = 'none') +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+
+# Visualize QC metrics with a FeatureScatter plot
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- FeatureScatter(seurat_list[[i]], feature1 = "nCount_RNA", feature2 = "percent.mt") +  theme(legend.position = 'none') 
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- FeatureScatter(seurat_list[[i]], feature1 = "nCount_RNA", feature2 = "nFeature_RNA") +  theme(legend.position = 'none') 
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+
+# Visualize the distribution of mitochondrial gene expression detected per cell
+plot.list <- list()
+for (i in 1:4) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(color=orig.ident, x=percent.mt, fill=orig.ident)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + 
+    theme_classic() +
+    geom_vline(xintercept = 0.2)
+  
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=2, labels = seurat_names)
+
+# Visualize the distribution of nFeature_RNA per cell
+plot.list <- list()
+for (i in 1:4) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(color=orig.ident, x=nFeature_RNA, fill=orig.ident)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + 
+    theme_classic() +
+    geom_vline(xintercept = 1000)
+  
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=2, labels = seurat_names)
+
+
+# we will set the mt threshold at 0.5%
+#Filter cells that have unique filter counts < 1000 & >0.2% mitochondrial counts
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    x <- subset(x, subset = nFeature_RNA > 1000 & percent.mt < 0.5)
+
+})
+
+```
+
+
+```{r qc.gene.filter, results='hide', message=FALSE, fig.keep='none'}
+# Visualize the number UMIs/transcripts per cell 
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=nCount_RNA)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + 
+    theme_classic() +
+    ylab("Cell density") +
+    geom_vline(xintercept = 500)
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=nFeature_RNA)) + 
+    geom_density(alpha = 0.2) + 
+    theme_classic() +
+    scale_x_log10() + 
+    geom_vline(xintercept = 300)
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+
+```
+
+```{r normalise, results='hide', message=FALSE, fig.keep='none'}
+seurat_list <- lapply(X = seurat_list, FUN = SCTransform) 
+
+```
+
+```{r bin.human.rodent, results='hide', message=FALSE, fig.keep='none'}
+# proportions of counts mapping to human and rodent genes.
+# Note: we cant integrate until the human cells are defined as the gene names of the single human:rat chimera are not present in others.
+quant_human_rodent <- function(res_mat) {
+  rodent_inds <- !grepl("GRCh38",row.names(res_mat))
+  human_inds <- grepl("GRCh38",row.names(res_mat))
+  cell_species <- tibble(n_rodent_umi = Matrix::colSums(res_mat[rodent_inds,]),
+                         n_human_umi = Matrix::colSums(res_mat[human_inds,]),
+                         tot_umi = Matrix::colSums(res_mat),
+                         prop_rodent = n_rodent_umi / tot_umi,
+                         prop_human = n_human_umi / tot_umi)
+  
+}
+
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+  x <- AddMetaData(
+    object = x,
+    metadata = quant_human_rodent(x)
+  )
+})
+
+# vlnplot of human proportions
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- VlnPlot(seurat_list[[i]], features = c("prop_human"), ncol = 1) + theme(legend.position = 'none') +
+    theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank())
+}
+
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
+
+# plot of human proportions v ncount
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- FeatureScatter(seurat_list[[i]], feature1 = "nCount_RNA", feature2 = "prop_human") + theme(legend.position = 'none') 
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
+
+# plot of human proportions v ncount
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=prop_human)) + 
+    geom_density(alpha = 0.2) + 
+    theme_classic() +
+    ylab("Human Proportion") +
+    geom_vline(xintercept = 0.9)
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
+
+
+# bin into human or rodent using 0.9 human prop threshold
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    origin <- x@meta.data$prop_human> 0.9
+    origin[origin == "TRUE"] <- "human"
+    origin[origin == "FALSE"] <- "rodent"
+   x <- AddMetaData(object = x,metadata = origin, col.name = 'origin')
+})
+
+lapply(seurat_list,function(x) table(x@meta.data$origin))
+
+# Filter cells to human - only taking cellranger samples currently until alignment of "kallisto_1y_hm" & "kallisto_6w_hr" corrected.
+seurat_list_human <- lapply(X = seurat_list[1:4], FUN = function(x) {
+    x <- subset(x, subset = origin == "human")
+})
+
+# Filter genes to human
+seurat_list_human <- lapply(X = seurat_list_human, FUN = function(x) {
+    x <- x[grep("GRCh38",row.names(x)),]
+})
+
+```
+
+```{r sct.init, results='hide', message=FALSE, fig.keep='none'}
+# Performing integration on datasets normalized with SCTransform
+
+# # Rename gene names 
+# RenameGenesSeurat <- function(obj) {
+#   print("Run this before integration. It only changes obj@assays$RNA@counts, @data and @scale.data.")
+#   RNA <- obj@assays$SCT
+# 
+#   if (nrow(RNA) == length(newnames)) {
+#     if (length(RNA@counts)) RNA@counts@Dimnames[[1]]            <- gsub("GRCh38--","",RNA@counts@Dimnames[[1]])
+#     if (length(RNA@data)) RNA@data@Dimnames[[1]]                <- gsub("GRCh38--","",RNA@data@Dimnames[[1]])
+#     if (length(RNA@scale.data)) row.names(RNA@scale.data)   <- gsub("GRCh38--","",row.names(RNA@scale.data))
+#   } else {"Unequal gene sets: nrow(RNA) != nrow(newnames)"}
+#   obj@assays$SCT <- RNA
+#   return(obj)
+# }
+# 
+# seurat_list_human <- lapply(seurat_list_human, function(x) RenameGenesSeurat(x))
+# 
+# RenameGenesSeurat_RNA <- function(obj) { 
+#   print("Run this before integration. It only changes obj@assays$RNA@counts, @data and @scale.data.")
+#   RNA <- obj@assays$RNA
+# 
+#   if (nrow(RNA) == length(newnames)) {
+#     if (length(RNA@counts)) RNA@counts@Dimnames[[1]]            <- gsub("GRCh38--","",RNA@counts@Dimnames[[1]])
+#     if (length(RNA@data)) RNA@data@Dimnames[[1]]                <- gsub("GRCh38--","",RNA@data@Dimnames[[1]])
+#     if (length(RNA@scale.data)) row.names(RNA@scale.data)   <- gsub("GRCh38--","",row.names(RNA@scale.data))
+#   } else {"Unequal gene sets: nrow(RNA) != nrow(newnames)"}
+#   obj@assays$RNA <- RNA
+#   return(obj)
+# }
+# 
+# seurat_list_human <- lapply(seurat_list_human, function(x) RenameGenesSeurat_RNA(x))
+
+# get variable features
+seurat_list_human <- lapply(X = seurat_list_human, function(x) FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)) 
+
+# select features that are repeatedly variable across datasets for integration 
+# Note cellranger_1y_hm did not have enough cells to integrate
+seurat_list_human_sub <- seurat_list_human[c(1,4)]
+features <- SelectIntegrationFeatures(object.list = seurat_list_human_sub, nfeatures = 3000)
+seurat_list_human_sub <- PrepSCTIntegration(object.list = seurat_list_human_sub, anchor.features = features)
+```
+
+```{r sct.anchors, message=FALSE, fig.keep='none'}
+merge.anchors <- FindIntegrationAnchors(object.list = seurat_list_human_sub, normalization.method = 'SCT', anchor.features = features)
+merge.combined.sct <- IntegrateData(anchorset = merge.anchors, normalization.method = 'SCT', k.weight = 32)
+```
+
+```{r sct.clustering, results='hide', message=FALSE}
+
+# Run the standard workflow for visualization and clustering
+merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
+merge.combined.sct <- RunPCA(merge.combined.sct, npcs = 30, verbose = FALSE)
+merge.combined.sct <- RunUMAP(merge.combined.sct, reduction = "pca", dims = 1:30)
+merge.combined.sct <- FindNeighbors(merge.combined.sct, reduction = "pca", dims = 1:30)
+merge.combined.sct <- FindClusters(merge.combined.sct, resolution = 0.5)
+
+# Visualization
+p1 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = "orig.ident")
+p2 <- DimPlot(merge.combined.sct, reduction = "umap", split.by = "orig.ident")
+p3 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = 'seurat_clusters')
+p1
+p2
+p3
+
+# plot metrics
+metrics <-  c("nFeature_RNA", "nCount_RNA", "percent.mt")
+
+FeaturePlot(merge.combined.sct, 
+            reduction = "umap", 
+            features = metrics,
+            pt.size = 0.4, 
+            sort.cell = TRUE)
+
+# Extract identity and sample information from seurat object to determine the number of cells per cluster per sample
+n_cells <- FetchData(merge.combined.sct, 
+                     vars = c("ident", "orig.ident")) %>%
+        dplyr::count(ident, orig.ident) %>%
+        tidyr::spread(ident, n)
+n_cells
+
+```
+
+```{r plot.marker.genes, results='hide', message=FALSE}
+
+#Set a gene list of interest
+my_genes <- c( "GRCh38--NCAM1", "GRCh38--MAP2", "GRCh38--TH", "GRCh38--KCNJ6", "GRCh38--LMX1A", "GRCh38--PITX3", "GRCh38--DCC", "GRCh38--NTN1", "GRCh38--CDC42",  "GRCh38--UNC5A", "GRCh38--DSCAM", "GRCh38--NEO1", "GRCh38--GFRA1", "GRCh38--RET", "GRCh38--RAC1", "GRCh38--RYK", "GRCh38--FZD3", "GRCh38--CXCR4", "GRCh38--PLXNA4", "GRCh38--ARRB1")
+
+# Select the RNA counts slot to be the default assay
+DefaultAssay(merge.combined.sct) <- "RNA"
+
+#Violin plot of markers of interest
+VlnPlot(merge.combined.sct, features=my_genes)
+
+```
+
+```{r cell.annotation, results='hide', message=FALSE}
+# set assy to RNA for cell annotation
+DefaultAssay(merge.combined.sct) <- "RNA"
+merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
+
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Brain"
+# e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
+
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+prefix <- "GRCh38--"
+for (i in 1:length(gs_list$gs_positive)){
+  if (length(gs_list$gs_positive[[i]]) > 0){
+  gs_list$gs_positive[[i]] <- paste0(prefix,unlist(gs_list$gs_positive[[i]]))
+  #gs_list$gs_positive[[i]][gs_list$gs_positive[[i]] %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
+  }
+}
+
+for (i in 1:length(gs_list$gs_negative)){
+  if (length(gs_list$gs_negative[[i]]) > 0){
+  gs_list$gs_negative[[i]] <- paste0(prefix,unlist(gs_list$gs_negative[[i]]))
+  }
+}
+
+tmp <- unlist(gs_list)[!unlist(gs_list) %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
+
+
+# # get cell-type by cell matrix
+# es.max = sctype_score(scRNAseqData = merge.combined.sct[["RNA"]]@scale.data, scaled = TRUE, 
+#                       gs = gs_list$gs_positive) 
+# NOTE:  the sctype_score function is only working when run outside function command??? I dont know why??
+# Hence running outside function command
+scRNAseqData = merge.combined.sct[["RNA"]]@scale.data
+scaled = TRUE
+gs = gs_list$gs_positive
+gs2 = NULL
+gene_names_to_uppercase = 0
+
+   # check input matrix
+    if(!is.matrix(scRNAseqData)){
+        warning("scRNAseqData doesn't seem to be a matrix")
+    } else {
+        if(sum(dim(scRNAseqData))==0){
+            warning("The dimension of input scRNAseqData matrix equals to 0, is it an empty matrix?")
+        }
+    }
+    
+    # marker sensitivity
+    marker_stat = sort(table(unlist(gs)), decreasing = T); 
+    marker_sensitivity = data.frame(score_marker_sensitivity = scales::rescale(as.numeric(marker_stat), to = c(0,1), from = c(length(gs),1)),
+                                    gene_ = names(marker_stat), stringsAsFactors = !1)
+
+    # convert gene names to Uppercase
+    if(gene_names_to_uppercase){
+        rownames(scRNAseqData) = toupper(rownames(scRNAseqData));
+    }
+    
+    # subselect genes only found in data
+    names_gs_cp = names(gs); names_gs_2_cp = names(gs2);
+    gs = lapply(1:length(gs), function(d_){ 
+        GeneIndToKeep = rownames(scRNAseqData) %in% as.character(gs[[d_]]); rownames(scRNAseqData)[GeneIndToKeep]})
+    gs2 = lapply(1:length(gs2), function(d_){ 
+        GeneIndToKeep = rownames(scRNAseqData) %in% as.character(gs2[[d_]]); rownames(scRNAseqData)[GeneIndToKeep]})
+    names(gs) = names_gs_cp; names(gs2) = names_gs_2_cp;
+    cell_markers_genes_score = marker_sensitivity[marker_sensitivity$gene_ %in% unique(unlist(gs)),]
+
+    # z-scale if not
+    if(!scaled) Z <- t(scale(t(scRNAseqData))) else Z <- scRNAseqData
+    
+    # multiple by marker sensitivity
+    for(jj in 1:nrow(cell_markers_genes_score)){
+        Z[cell_markers_genes_score[jj,"gene_"], ] = Z[cell_markers_genes_score[jj,"gene_"], ] * cell_markers_genes_score[jj, "score_marker_sensitivity"]
+    }
+    
+    # subselect only with marker genes
+    Z = Z[unique(c(unlist(gs),unlist(gs2))), ]
+    
+    # combine scores
+    es = do.call("rbind", lapply(names(gs), function(gss_){ 
+        sapply(1:ncol(Z), function(j) {
+            gs_z = Z[gs[[gss_]], j]; gz_2 = Z[gs2[[gss_]], j] * -1
+            sum_t1 = (sum(gs_z) / sqrt(length(gs_z))); sum_t2 = sum(gz_2) / sqrt(length(gz_2));
+            if(is.na(sum_t2)){
+                sum_t2 = 0;
+            }
+            sum_t1 + sum_t2
+        })
+    })) 
+    
+    dimnames(es) = list(names(gs), colnames(Z))
+    es.max <- es[!apply(is.na(es) | es == "", 1, all),] # remove na rows
+
+
+
+# merge by cluster
+cL_resutls = do.call("rbind", lapply(unique(merge.combined.sct@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(merge.combined.sct@meta.data[merge.combined.sct@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(merge.combined.sct@meta.data$seurat_clusters==cl)), 10)
+}))
+
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+print(sctype_scores[,1:3])
+
+```
+
+```{r DEG.results = 'hide', message=FALSE}
+DefaultAssay(merge.combined.sct) <- "SCT"
+
+# Find differentially expressed features between cluster 0 (unknown human) and cluster 1 (dopaminergic neurons)
+merge.combined.sct <- PrepSCTFindMarkers(merge.combined.sct)
+markers <- FindMarkers(
+  object = merge.combined.sct,
+  ident.1 = "0",
+  ident.2 = "1",
+  assay = "SCT",
+  recorrect_umi = FALSE
+)
+
+# view results
+head(markers)
+
+markers_write <- markers[markers$p_val_adj < 0.05,]
+row.names(markers_write) <- gsub("GRCh38--","",row.names(markers_write))
+# write to file
+write.table(markers_write, file="DEG_young.xenograft_cl0(unk)-cl1(DaN).txt", quote = FALSE, sep="\t")
+
+# cross check KEGG axond guidance
+kegg_axon_guidance <- read.delim(file="/Users/zacc/USyd/ASAP/snrna_seq/analysis/KEGG_AXON_GUIDANCE.v2023.2.Hs.grp",head=T,sep="\t")
+
+row.names(markers_write)[row.names(markers_write) %in% kegg_axon_guidance[,1]]
+
+```
+
