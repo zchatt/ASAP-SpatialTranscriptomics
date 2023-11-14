@@ -72,7 +72,7 @@ min_genes_detected.frac = 0.01 # formally set as 0.1
 setwd(analysis_dir)
 
 # automatically list files in each directory for use
-DCCFiles <- dir(file.path(dcc_file_dir), pattern = ".dcc$", full.names = TRUE, recursive = TRUE)
+DCCFiles <- dir(file.path(dcc_file_dir), pattern = ".dcc$", full.names = TRUE)
 
 # load data
 # NOTE: the data columns of interest need to be present within the SampleAnnotationFile. QC plots will be made for each.

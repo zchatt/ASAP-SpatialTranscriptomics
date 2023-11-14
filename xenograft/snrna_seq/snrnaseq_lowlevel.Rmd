@@ -32,12 +32,17 @@ knitr::opts_chunk$set(
 
 ```{r data, message=FALSE}
 library(Seurat)
+options(Seurat.object.assay.version = "v5")
 library(patchwork)
 library(Matrix)
 library(tidyverse)
 library(plyr)
 library(ggpubr)
+library(HGNChelper)
+library(EnhancedVolcano)
 theme_set(theme_bw())
+options(future.globals.maxSize = 1e9)
+options(Seurat.object.assay.version = "v5")
 
 # Function to read in kallisto - Slightly modified from BUSpaRse
 read_count_output <- function(dir, name) {
@@ -164,6 +169,8 @@ k_so <- lapply(X = k_so, FUN = function(x) {
 seurat_list <- c(cr_so,k_so)
 # get/ set names
 seurat_names <- paste0(c(rep("cellranger",4),rep("kallisto",4)),sep="_",gsub(".*2_","",c(names(cr_dfs),names(k_dfs))))
+# get/ set names
+seurat_names_2 <- gsub("hm","Mouse",gsub("hr","Rat",gsub(".*2_","",c(names(cr_dfs),names(k_dfs)))))
 ```
 
 ```{r qc.sample.filter, results='hide', message=FALSE, fig.keep='none'}
@@ -192,7 +199,6 @@ for (i in 1:length(seurat_list)) {
         axis.ticks.x=element_blank())
 }
 ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
-
 
 # Vlnplot of percent mt
 plot.list <- list()
@@ -233,6 +239,20 @@ for (i in 1:4) {
 }
 ggarrange(plotlist=plot.list, nrow=2, ncol=2, labels = seurat_names)
 
+plot.list <- list()
+for (i in 1:4) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(color=orig.ident, x=percent.mt, fill=orig.ident)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + xlab("mtRNA (%)") +
+    theme_classic()  + theme(legend.position = "none") +
+    geom_vline(xintercept = 0.5, lty =2)
+  
+}
+arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4)
+ggsave("cellranger_mtprc_dist.png", arrange)
+
+
 # Visualize the distribution of nFeature_RNA per cell
 plot.list <- list()
 for (i in 1:4) {
@@ -240,11 +260,12 @@ for (i in 1:4) {
     ggplot(aes(color=orig.ident, x=nFeature_RNA, fill=orig.ident)) + 
     geom_density(alpha = 0.2) + 
     scale_x_log10() + 
-    theme_classic() +
-    geom_vline(xintercept = 1000)
+    theme_classic()  + theme(legend.position = "none") +
+    geom_vline(xintercept = 1000, lty =2)
   
 }
-ggarrange(plotlist=plot.list, nrow=2, ncol=2, labels = seurat_names)
+arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4)
+ggsave("cellranger_nFeature_dist.png", arrange)
 
 
 # we will set the mt threshold at 0.5%
@@ -254,6 +275,9 @@ seurat_list <- lapply(X = seurat_list, FUN = function(x) {
 
 })
 
+# mean mtRNA percentage and nCount after filtering
+lapply(seurat_list,function(x) mean(x$nFeature_RNA))
+lapply(seurat_list,function(x) mean(x$percent.mt))
 ```
 
 
@@ -272,7 +296,7 @@ for (i in 1:length(seurat_list)) {
 ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
 
 plot.list <- list()
-for (i in 1:length(seurat_list)) {
+for (i in 1:length(seurat_list[1:4])) {
   plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
     ggplot(aes(x=nFeature_RNA)) + 
     geom_density(alpha = 0.2) + 
@@ -280,7 +304,7 @@ for (i in 1:length(seurat_list)) {
     scale_x_log10() + 
     geom_vline(xintercept = 300)
 }
-ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+ggarrange(plotlist=plot.list, nrow=1, ncol=4, labels = seurat_names_2)
 
 
 ```
@@ -317,10 +341,11 @@ for (i in 1:length(seurat_list)) {
   plot.list[[i]] <- VlnPlot(seurat_list[[i]], features = c("prop_human"), ncol = 1) + theme(legend.position = 'none') +
     theme(axis.title.x=element_blank(),
         axis.text.x=element_blank(),
-        axis.ticks.x=element_blank())
+        axis.ticks.x=element_blank()) + ylab("Human Proportion")
 }
 
-ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
+arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
+ggsave("humanprop_vlnplot.png", arrange)
 
 # plot of human proportions v ncount
 plot.list <- list()
@@ -329,18 +354,18 @@ for (i in 1:length(seurat_list)) {
 }
 ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
 
-# plot of human proportions v ncount
+# plot of human proportions distribution
 plot.list <- list()
 for (i in 1:length(seurat_list)) {
   plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
     ggplot(aes(x=prop_human)) + 
     geom_density(alpha = 0.2) + 
     theme_classic() +
-    ylab("Human Proportion") +
-    geom_vline(xintercept = 0.9)
+    xlab("Human Proportion") +
+    geom_vline(xintercept = 0.9, lty =2)
 }
-ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2), labels = seurat_names)
-
+arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2))
+ggsave("humanprop_dist.png", arrange)
 
 # bin into human or rodent using 0.9 human prop threshold
 seurat_list <- lapply(X = seurat_list, FUN = function(x) {
@@ -402,15 +427,16 @@ seurat_list_human <- lapply(X = seurat_list_human, FUN = function(x) {
 seurat_list_human <- lapply(X = seurat_list_human, function(x) FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)) 
 
 # select features that are repeatedly variable across datasets for integration 
-# Note cellranger_1y_hm did not have enough cells to integrate
+# Note cellranger_1y_hm & cellranger_6w_hr did not have enough cells to integrate, hence these were first merged with
 seurat_list_human_sub <- seurat_list_human[c(1,4)]
-features <- SelectIntegrationFeatures(object.list = seurat_list_human_sub, nfeatures = 3000)
+features <- SelectIntegrationFeatures(object.list = seurat_list_human_sub, nfeatures = 2000)
 seurat_list_human_sub <- PrepSCTIntegration(object.list = seurat_list_human_sub, anchor.features = features)
 ```
 
 ```{r sct.anchors, message=FALSE, fig.keep='none'}
 merge.anchors <- FindIntegrationAnchors(object.list = seurat_list_human_sub, normalization.method = 'SCT', anchor.features = features)
 merge.combined.sct <- IntegrateData(anchorset = merge.anchors, normalization.method = 'SCT', k.weight = 32)
+
 ```
 
 ```{r sct.clustering, results='hide', message=FALSE}
@@ -430,14 +456,20 @@ p1
 p2
 p3
 
+arrange <- ggarrange(plotlist=list(p3,p2), nrow=2, ncol=2, widths = c(2,2))
+ggsave("umap_humancells.png", arrange)
+
+
 # plot metrics
 metrics <-  c("nFeature_RNA", "nCount_RNA", "percent.mt")
 
-FeaturePlot(merge.combined.sct, 
+p4 <- FeaturePlot(merge.combined.sct, 
             reduction = "umap", 
             features = metrics,
             pt.size = 0.4, 
             sort.cell = TRUE)
+
+ggsave("umap_seqmetrics.png", p4)
 
 # Extract identity and sample information from seurat object to determine the number of cells per cluster per sample
 n_cells <- FetchData(merge.combined.sct, 
@@ -446,6 +478,8 @@ n_cells <- FetchData(merge.combined.sct,
         tidyr::spread(ident, n)
 n_cells
 
+# save seurat object
+saveRDS(merge.combined.sct, file = "xeno_human_snrnaseq_seurat_031123.rds")
 ```
 
 ```{r plot.marker.genes, results='hide', message=FALSE}
@@ -462,6 +496,8 @@ VlnPlot(merge.combined.sct, features=my_genes)
 ```
 
 ```{r cell.annotation, results='hide', message=FALSE}
+merge.combined.sct <- readRDS("xeno_human_snrnaseq_seurat_031123.rds")
+
 # set assy to RNA for cell annotation
 DefaultAssay(merge.combined.sct) <- "RNA"
 merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
@@ -477,7 +513,10 @@ db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScType
 tissue = "Brain"
 # e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
 
-# prepare gene sets
+
+
+
+# # prepare gene sets
 gs_list = gene_sets_prepare(db_, tissue)
 prefix <- "GRCh38--"
 for (i in 1:length(gs_list$gs_positive)){
@@ -487,18 +526,27 @@ for (i in 1:length(gs_list$gs_positive)){
   }
 }
 
-for (i in 1:length(gs_list$gs_negative)){
-  if (length(gs_list$gs_negative[[i]]) > 0){
-  gs_list$gs_negative[[i]] <- paste0(prefix,unlist(gs_list$gs_negative[[i]]))
-  }
-}
+ for (i in 1:length(gs_list$gs_negative)){
+   if (length(gs_list$gs_negative[[i]]) > 0){
+   gs_list$gs_negative[[i]] <- paste0(prefix,unlist(gs_list$gs_negative[[i]]))
+   }
+ }
 
 tmp <- unlist(gs_list)[!unlist(gs_list) %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
 
 
-# # get cell-type by cell matrix
-# es.max = sctype_score(scRNAseqData = merge.combined.sct[["RNA"]]@scale.data, scaled = TRUE, 
-#                       gs = gs_list$gs_positive) 
+# ## Test FOUNDIN-PD markers
+# gs_list = list
+# 
+# iter1 <- list(item1 = 1, item2 = "a")
+# iter2 <- list(item1 = 1, item2 = "b")
+# All <- list(iter1 = iter1, iter2 = iter2)
+# 
+
+
+# get cell-type by cell matrix
+# es.max = sctype_score(scRNAseqData = merge.combined.sct[["RNA"]]@scale.data, scaled = TRUE,
+#                        gs = gs_list$gs_positive)
 # NOTE:  the sctype_score function is only working when run outside function command??? I dont know why??
 # Hence running outside function command
 scRNAseqData = merge.combined.sct[["RNA"]]@scale.data
@@ -571,9 +619,33 @@ cL_resutls = do.call("rbind", lapply(unique(merge.combined.sct@meta.data$seurat_
 
 sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
 
+# define thresholds
+thresholds <- sctype_scores$ncells/4
+
+# plot 
+dplot <- cL_resutls[cL_resutls$cluster == 0,]
+p1 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
+  geom_bar(stat = "identity") + xlab("Cell type") +
+    theme_classic() +
+    geom_hline(yintercept = thresholds[1], lty =2) + 
+  theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 0")
+
+dplot <- cL_resutls[cL_resutls$cluster == 1,]
+p2 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
+  geom_bar(stat = "identity") + xlab("Cell type") +
+    theme_classic() +
+    geom_hline(yintercept = thresholds[2], lty =2) + 
+  theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 1")
+
+arrange <- ggarrange(plotlist=list(p1,p2), nrow=2, ncol=2, widths = c(2,2))
+ggsave("sctype_cl0.1.png", arrange)
+
+
 # set low-confident (low ScType score) clusters to "unknown"
-sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < thresholds] = "Unknown"
 print(sctype_scores[,1:3])
+
+
 
 ```
 
@@ -593,10 +665,31 @@ markers <- FindMarkers(
 # view results
 head(markers)
 
-markers_write <- markers[markers$p_val_adj < 0.05,]
+# format for plottind and writing
+markers_write <- markers
 row.names(markers_write) <- gsub("GRCh38--","",row.names(markers_write))
+
 # write to file
-write.table(markers_write, file="DEG_young.xenograft_cl0(unk)-cl1(DaN).txt", quote = FALSE, sep="\t")
+write.table(markers_write [markers_write $p_val_adj < 0.05,], file="DEG_young.xenograft_cl0(unk)-cl1(DaN).txt", quote = FALSE, sep="\t")
+
+# plot logFC vs p-value
+pdf("volcano_deg_cl0.1.pdf")
+EnhancedVolcano(toptable = markers_write, x = "avg_log2FC",y = "p_val_adj",
+                lab = rownames(markers_write),pCutoff = 0.05,
+                title = c("cluster 0 v 1"),FCcutoff = 1,
+                subtitle = "")
+dev.off()
+
+#Set a gene list of interest
+my_genes <- c("GRCh38--SLC6A3","GRCh38--TH","GRCh38--KCNJ6")
+
+# Select the RNA counts slot to be the default assay
+DefaultAssay(merge.combined.sct) <- "RNA"
+
+#Violin plot of markers of interest
+p1 <- VlnPlot(merge.combined.sct, features=my_genes)
+arrange <- ggarrange(plotlist=list(p1), nrow=2, ncol=2, widths = c(2,2))
+ggsave("topgenes_deg_cl0.1.png", arrange)
 
 # cross check KEGG axond guidance
 kegg_axon_guidance <- read.delim(file="/Users/zacc/USyd/ASAP/snrna_seq/analysis/KEGG_AXON_GUIDANCE.v2023.2.Hs.grp",head=T,sep="\t")

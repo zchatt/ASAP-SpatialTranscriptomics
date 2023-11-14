@@ -30,10 +30,17 @@ library(Seurat)
 # data_path = '/Users/zacc/USyd/spatial_transcriptomics/data/SANPIN_VisiumFFPE_Cytassist_results/221011/V52Y16-079-A1/VISIUM/V52Y16-079-A1/outs'
 # ctr_image = 'tissue_lowres_image.png' # name of images file within '/spatial' directory of visium folder
 
-run_name = "V52Y16-079-B1"
-results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/V52Y16-079-B1'
-data_path = '/Users/zacc/USyd/spatial_transcriptomics/data/SANPIN_VisiumFFPE_Cytassist_results/221011/V52Y16-079-B1/VISIUM/V52Y16-079-B1/outs'
+# run_name = "V52Y16-079-B1"
+# results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/V52Y16-079-B1'
+# data_path = '/Users/zacc/USyd/spatial_transcriptomics/data/SANPIN_VisiumFFPE_Cytassist_results/221011/V52Y16-079-B1/VISIUM/V52Y16-079-B1/outs'
+# ctr_image = 'tissue_lowres_image.png' # name of images file within '/spatial' directory of visium folder
+# 
+
+run_name = "S11W1"
+results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/S11W1'
+data_path = '/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/GIMR_GWCCG_220131_SANPIN_10X_Visium.analyses/analyses/S11W1/spaceranger_count_cytassist/S11W1/outs'
 ctr_image = 'tissue_lowres_image.png' # name of images file within '/spatial' directory of visium folder
+
 
 ## thresholds
 expression_threshold = 1

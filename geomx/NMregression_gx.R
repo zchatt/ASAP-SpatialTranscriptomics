@@ -17,8 +17,8 @@ theme_set(theme_minimal())
 
 
 ## inputs
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis"
-rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/geomx_sep2023_seurat.Rdata"
+analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
+rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/geomx_oct2023_seurat.Rdata"
 NM_data_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/NM_data_new"
 #NM_data_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/NM_data"
 
