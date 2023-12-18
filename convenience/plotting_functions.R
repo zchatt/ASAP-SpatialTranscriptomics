@@ -30,7 +30,6 @@ violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_la
   return(bxp)
 }
 
-
 # Boxplot functions
 boxplot_2grp_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, grp_variable,colour_palette) {
   

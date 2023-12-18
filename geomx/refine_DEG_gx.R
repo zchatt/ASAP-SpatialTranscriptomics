@@ -1,4 +1,5 @@
 # integrating DEG and ctDEG adn prioritising DEGs for validation
+
 library(ggVennDiagram)
 library(STRINGdb)
 library(rbioapi)
@@ -7,33 +8,35 @@ library(enrichR)
 ###############
 ### Input
 ###############
-# paths
+# analysis dir
+working_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
+setwd(working_dir)
+
+# ST data
 rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
-public_ctDEG ="/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/deg_markers/format_deg_markers.R"
+
+# source plotting functions and poublic degs
+source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/convenience/plotting_functions.R")
+source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/deg_markers/format_deg_markers.R")
+
+# PD genetics
 g4pd_cnv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_cnv20200820.txt"
 g4pd_cv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_common_variant20200820.txt"
 g4pd_rg_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_rare_gene20200820.txt"
 g4pd_rv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_rare_variant20200820.txt"
 g4pd_deg_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_gene_expression20200820.txt"
 contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contrasts_matrix.xlsx"
-working_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
-setwd(working_dir)
-
-# format genetics data
 genetic_list <- list()
 genetic_list[[1]] <- read.delim(g4pd_rg_path, sep='\t', row.names=NULL, header=T)
 genetic_list[[2]] <- read.delim(g4pd_cnv_path, sep='\t', row.names=NULL, header=T)
 genetic_list[[3]] <- read.delim(g4pd_cv_path, sep='\t', row.names=NULL, header=T)
 genetic_list[[4]] <- read.delim(g4pd_rv_path, sep='\t', row.names=NULL, header=T)
-
 g4pd_deg <- read.delim(g4pd_deg_path)
 colnames(g4pd_deg) <- paste0("Published_PD_DEG_evidence_",colnames(g4pd_deg))
 
-# source
-source(public_ctDEG)
+# DEG and ctDEG results
 load("cside_deg.rds") # cside results
-#load("voom_deg_fgsea.rds") # limma voom results
-load("/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/voom_deg.rds")
+load("/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/voom_deg.rds") # limma voom results
 
 # contrast matrices
 cont_dat <- read_excel(contrast_path, sheet = "LIMMA_Voom")
@@ -41,9 +44,9 @@ contl <- cont_dat[cont_dat$notes == "run",]
 cont_dat <- read_excel(contrast_path, sheet = "C-SIDE")
 contc <- cont_dat[cont_dat$notes == "run",]
 
-###############
-### Functions
-###############
+#################
+### Functions ###
+#################
 # Function to combine p-values using Stouffer's Method
 combine_pvalues_stouffer <- function(p_values) {
   # Convert p-values to Z-scores
@@ -58,10 +61,9 @@ combine_pvalues_stouffer <- function(p_values) {
   return(combined_p)
 }
 
-#############################################
-## 1. Identify positive and negative regulators of NM
-#############################################
-load("/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/voom_deg.rds")
+#########################################################
+## 1. Identify positive and negative regulators of NM ###
+#########################################################
 ctr.epd.lpd.full <- as.data.frame(voom_res[[132]])
 ctr.epd.lpd.th <- as.data.frame(voom_res[[133]])
 ctr.ilbd.full <- as.data.frame(voom_res[[134]])
@@ -119,7 +121,6 @@ pos_reg_full <- pos_reg2[!pos_reg2$Gene %in% neg_reg2$Gene,]
 NM_synthesis_genes <- c("TH","TYR","DDC","COMT","MAOA","MAOB","AKR1B1","SLC18A2","RGN",row.names(sc_obj)[grep("ALDH",row.names(sc_obj))])
 nm_pos <- pos_reg_full[pos_reg_full$Gene %in% NM_synthesis_genes,]
 nm_neg <- neg_reg_full[neg_reg_full$Gene %in% NM_synthesis_genes,]
-
 
 
 ### TH masked ROI ###
@@ -231,34 +232,7 @@ load(rdata)
 dat <- as.matrix(gxdat_s@assays$RNA$data)
 meta_dat$Diagnosis<- factor(meta_dat$Diagnosis, levels=c('CTR','ILBD','ePD','lPD'))
 
-
-# colour palettes
-Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
-age_group_col = viridis(4)
-ROI_col = viridis(7)
-
-# Violin plot function
-violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, colour_palette) {
-  # make violin plot
-  bxp <- ggviolin(
-    data_table, x = x_variable, y = y_variable, 
-    fill = x_variable, palette = colour_palette) + theme(legend.position = "none")
-  
-  # perform t-test
-  data_table$x <- data_table[, x_variable]
-  data_table$y <- data_table[, y_variable]
-  stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p.adj")
-  print(stat.test)
-  
-  # add p-values to plot and save the result
-  bxp <- bxp + stat_pvalue_manual(stat.test,
-                                  y.position = max(data_table$y) * 1.4, step.increase = 0.1,
-                                  label = "p.adj.signif") + ylab(y_lab) + xlab(x_lab)
-  
-  #return object
-  return(bxp)
-}
-
+# gene interest 
 gene_name <- "CHCHD10"
 gene <- dat[gene_name,]
 dplot <- cbind(meta_dat,gene)
@@ -321,7 +295,8 @@ v1 <- violin_plot_function(dplot2,"Diagnosis","gene","Diagnosis",paste0(gene_nam
   theme(plot.title = element_text(hjust = 1)) +
   labs(title="SND:Full ROI")
 
-# write 
+
+# Get gene expression for Nakamura
 gene_name <- c("CHCHD10","CHCHD2","SNCA","PDHA1")
 gene <- dat[gene_name,]
 dplot <- cbind(meta_dat,t(gene))
@@ -331,8 +306,7 @@ dplot <- dplot[,c("Brainbank_ID","Sex","Age","PMD hs","ROI","SNCA","PDHA1","CHCH
 write.xlsx(dplot, file = "targeted_genelist_geomx_011223.xlsx")
 
 
-
-#### Running STRING 
+### Running STRING  ###
 ## Prioritizing NM genes by protein-protein interaction with Neuromelanin and Melanin Biosynthetic pathway members
 NM_synthesis_genes_expressed <- NM_synthesis_genes[NM_synthesis_genes %in% row.names(dat)]
 melanin_biosynthetic_process <- c("CITED1","TYR","PMEL","OCA2","MC1R","SLC24A5","DCT","MC1R","SLC45A2","PKS1") #GO:0042438
@@ -407,10 +381,9 @@ for (l1 in 1:length(NM_reg_list)){
 lapply(NM_reg_list,function(x) x["TRYP1",])
 
 
-
-#############################################
-## 2. Identify DEGs associated with Disease
-#############################################
+###############################################
+## 2. Identify DEGs associated with Disease ###
+###############################################
 # 1) Annotate Voom DEGs & Find Unique DEGs accross contrasts
 # voom_contrasts_interest <- c(114) # contrasts of interest eg. Diagnosis stage SNV TH
 # voom_contrasts_group <- c(104:115) # contrasts of same group as interest eg. Diagnosis stage 
@@ -537,7 +510,14 @@ names(cont_uniq_list) <- names_1
 
 
 
-# Not Yet Implemented (DOWN)
+
+
+
+### Not Yet Implemented (DOWN) ####
+
+
+
+
 
 # Identify ontologies
 # count numbers of DEGs
