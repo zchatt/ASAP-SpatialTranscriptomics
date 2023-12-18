@@ -12,13 +12,15 @@ library(ggplot2)
 library(viridis)
 library(ggpubr)
 library(EnvStats)
+library(rstatix)
 
 theme_set(theme_minimal())
 
 
 ## inputs
 analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
-rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/geomx_oct2023_seurat.Rdata"
+meta_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/Annotations_NM.xlsx"
+geomx_annot_path = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/Annotations_remapped.xlsx"
 NM_data_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/NM_data_new"
 #NM_data_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/NM_data"
 
@@ -59,26 +61,26 @@ for (i in 1:length(file.names)){
 # collapse to dataframe
 df_agg <- as.data.frame(do.call("rbind", ag_list))
 
-# read in geomx data
-setwd(analysis_dir)
-load(rdata)
-meta <- gxdat_s@meta.data
+# # read in meta data
+# setwd(analysis_dir)
+# load(rdata)
+# meta <- gxdat_s@meta.data
+meta <- read_excel(meta_path)
 
-# check if any brainbank ID data missing
+# check if any metadata is missing
 unique(df_agg$Brainbank_ID)[!unique(df_agg$Brainbank_ID) %in% meta$Brainbank_ID]
-table(meta$Brainbank_ID[!meta$Brainbank_ID %in% df_agg$Brainbank_ID])
-table(meta$Diagnosis[!meta$Brainbank_ID %in% df_agg$Brainbank_ID],meta$Brainbank_ID[!meta$Brainbank_ID %in% df_agg$Brainbank_ID])
 
+# # create brainbank id and region identifiers
+# meta$brainbank_region <- paste0(meta$Brainbank_ID,sep="_",meta$Brainregion_2)
+# df_agg$brainbank_region <- paste0(df_agg$Brainbank_ID,sep="_",df_agg$ROI)
 
-# create brainbank id and region identifiers
-meta$brainbank_region <- paste0(meta$Brainbank_ID,sep="_",meta$Brainregion_2)
-df_agg$brainbank_region <- paste0(df_agg$Brainbank_ID,sep="_",df_agg$ROI)
-
-# merge
-meta_simple <- meta[!duplicated(meta$brainbank_region),] # get just simple meta for NM assessments first
-df_agg_merged <- merge(df_agg,meta_simple,by="brainbank_region")
+# # merge and format
+# meta_simple <- meta[!duplicated(meta$brainbank_region),] # get just simple meta for NM assessments first
+df_agg_merged <- merge(df_agg,meta,by="Brainbank_ID",all.x=TRUE)
 df_agg_merged$Diagnosis <- factor(df_agg_merged$Diagnosis,levels=c("CTR","ILBD", "ePD","lPD"))
- 
+df_agg_merged <- df_agg_merged[df_agg_merged$ROI != "ROI 1",]
+df_agg_merged$log10_Area <- log10(df_agg_merged$`Area [µm²]`)
+  
 # format age group
 df_agg_merged$Age <- as.numeric(df_agg_merged$Age)
 dplot <- df_agg_merged
@@ -100,7 +102,6 @@ dplot <- dplot %>%
 df_agg_merged <- dplot
 
 # histograms of cohort
-
 dplot <- df_agg_merged
 #dplot$Age <- factor(dplot$Age,levels=as.character(unique(sort(as.numeric(dplot$Age)))))
 pa <- ggplot(dplot, aes(x = log10(`Area [µm²]`))) +
@@ -119,38 +120,52 @@ p2 <- ggplot(dplot, aes(x = log10(`Area [µm²]`), y=Diagnosis)) +
   geom_density_ridges(aes(fill = Diagnosis)) 
 
 dplot <- df_agg_merged
-p3 <- ggplot(dplot, aes(x = log10(`Area [µm²]`), y=Brainregion_2)) +
+p3 <- ggplot(dplot, aes(x = log10(`Area [µm²]`), y=ROI)) +
   geom_density() + theme_minimal() + ylab("Brain Region") + theme(legend.position = "none") +
-  geom_density_ridges(aes(fill = Brainregion_2)) 
+  geom_density_ridges(aes(fill = ROI)) 
 
-dplot <- df_agg_merged
-p4 <- ggplot(dplot, aes(x = Diagnosis, y=log10(`Area [µm²]`), fill=Diagnosis)) +
-  geom_boxplot(position=position_dodge(1)) + 
-  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5) +
-  scale_fill_brewer(palette='viridis') + theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
-        axis.text=element_text(size=10)) + 
-  stat_compare_means( label = "p.signif") 
+# colour palettes
+Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
+age_group_col = viridis(4)
+ROI_col = viridis(6)
 
+# Violin plot function
+violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, colour_palette) {
+  # make violin plot
+  bxp <- ggviolin(
+    data_table, x = x_variable, y = y_variable, 
+    fill = x_variable, palette = colour_palette) + theme(legend.position = "none")
+  
+  # perform t-test
+  data_table$x <- data_table[, x_variable]
+  data_table$y <- data_table[, y_variable]
+  stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p.adj")
+  stat.test <- stat.test[stat.test$p.adj < 0.05,]
+  print(stat.test)
+  
+  # add p-values to plot and save the result
+  bxp <- bxp + stat_pvalue_manual(stat.test,
+                                  y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                                  label = "p.adj.signif") + ylab(y_lab) + xlab(x_lab)
+  
+  # return object
+  return(bxp)
+}
 
-dplot <- df_agg_merged[!duplicated(df_agg_merged$Brainbank_ID.x),]
-p5 <- ggplot(dplot, aes(x = Diagnosis, y=Age, fill=Diagnosis)) +
-  geom_boxplot(position=position_dodge(1)) + 
-  geom_dotplot(binaxis='y', stackdir='center', dotsize=0.5) +
-  scale_fill_brewer(palette='viridis') + theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
-        axis.text=element_text(size=10)) + 
-  stat_compare_means( label = "p.signif") 
+# plots
+v1 <- violin_plot_function(dplot,"Diagnosis","log10_Area","Diagnosis","Log10(Area [µm²])", Diagnosis_col)
+v2 <- violin_plot_function(dplot,"age_group","log10_Area","age_group","Log10(Area [µm²])", age_group_col)
+v3 <- violin_plot_function(dplot,"ROI","log10_Area","Brain Region","Log10(Area [µm²])", ROI_col)
 
 
 arrange <- ggarrange(plotlist=list(pa,p1,p2,p3), nrow=2, ncol=2, widths = c(2,2))
 ggsave("distributions_NMarea.png", arrange)
-arrange <- ggarrange(plotlist=list(p4,p5), nrow=2, ncol=2, widths = c(2,2))
-ggsave("boxplot_NMarea_DxAgeRegion.png", arrange)
+arrange <- ggarrange(plotlist=list(pa,v1,v2,v3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_NMarea_DxAgeRegion.png", arrange)
 
 
 # run anova
-fit1 <- lm(log10(`Area [µm²]`) ~ Age + Diagnosis + Brainregion_2 + Sex, data = df_agg_merged)
+fit1 <- lm(log10(`Area [µm²]`) ~ Age + Diagnosis + ROI + Sex, data = df_agg_merged)
 a <- anova(fit1)
 nfac <- length(a[,1])-1
 maxval = 100
@@ -168,16 +183,15 @@ dev.off()
 #######################################################
 ### Evalutate the number of modes in a distribution ###
 #######################################################
-
-#var_interest <- unique(df_agg_merged$Brainregion_2)
-var_interest <- unique(df_agg_merged$Diagnosis)
+#var_interest <- unique(df_agg_merged$ROI)
+#var_interest <- unique(df_agg_merged$Diagnosis)
 var_interest = "total"
 
 for (i in 1:length(var_interest)) {
   print(i)
-  #x <- log10(df_agg_merged$`Area [µm²]`)
-  #x <- log10(df_agg_merged$`Area [µm²]`[df_agg_merged$Brainregion_2 == var_interest[i]])
-  x <- log10(df_agg_merged$`Area [µm²]`[df_agg_merged$Diagnosis == var_interest[i]])
+  x <- log10(df_agg_merged$`Area [µm²]`)
+  #x <- log10(df_agg_merged$`Area [µm²]`[df_agg_merged$ROI == var_interest[i]])
+  #x <- log10(df_agg_merged$`Area [µm²]`[df_agg_merged$Diagnosis == var_interest[i]])
   
   # Find the modes of a KDE: it assumes no mode spans more than one x value.)
   findmodes <- function(kde) {
@@ -318,118 +332,195 @@ test <- rosnerTest(log10(df_agg_merged$`Area [µm²]`[df_agg_merged$intra.extra 
 )
 test
 
-# aggregate counts
-library(ggpubr)
-dplot <- df_agg_merged %>% dplyr::count(intracellular, Diagnosis, brainbank_region, Brainregion_2,sort = TRUE)
-dplot <- dplot[dplot$intracellular == TRUE,]
-p4 <- ggplot(dplot, aes(x = Brainregion_2, y=n, fill=Diagnosis)) +
-  geom_boxplot(position=position_dodge(1)) + 
-  #facet_grid( ~ Brainregion_2) +
-  scale_fill_brewer(palette='viridis') + theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
-        axis.text=element_text(size=10)) + 
-  stat_compare_means( label = "p.signif") + ggtitle("intracellular")
 
-dplot <- df_agg_merged %>% dplyr::count(extracellular, Diagnosis, brainbank_region, Brainregion_2,sort = TRUE)
-dplot <- dplot[dplot$extracellular == TRUE,]
-p5 <- ggplot(dplot, aes(x = Brainregion_2, y=n, fill=Diagnosis)) +
-  geom_boxplot(position=position_dodge(1)) + 
-  #facet_grid( ~ Brainregion_2) +
-  scale_fill_brewer(palette='viridis') + theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
-        axis.text=element_text(size=10)) + 
-  stat_compare_means( label = "p.signif") + ggtitle("extracellular")
+############################
+#### COUNTS of NM
+############################
+dplot <- df_agg_merged %>% dplyr::count(intra.extra,Diagnosis,Brainbank_ID, ROI,age_group,`ROI Area [µm²]`, sort = TRUE)
+dplot <- dplot[!is.na(dplot$intra.extra),]
+dplot$n_per.µm2 <- dplot$n / as.numeric(dplot$`ROI Area [µm²]`)
+
+# colour palettes
+Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
+age_group_col = viridis(4)
+ROI_col = viridis(6)
+
+# plots
+d2 <- dplot[dplot$intra.extra == "iNM",]
+v1 <- violin_plot_function(d2,"Diagnosis","n","Diagnosis","iNM (n)", Diagnosis_col)
+v2 <- violin_plot_function(d2,"ROI","n","Brain Region","iNM (n)", ROI_col)
+v3 <- violin_plot_function(d2,"age_group","n","Age Group","iNM (n)", age_group_col)
+
+d2 <- dplot[dplot$intra.extra == "eNM",]
+v4 <- violin_plot_function(d2,"Diagnosis","n","Diagnosis","eNM (n)", Diagnosis_col)
+v5 <- violin_plot_function(d2,"ROI","n","Brain Region","eNM (n)", ROI_col)
+v6 <- violin_plot_function(d2,"age_group","n","Age Group","eNM (n)", age_group_col)
+
+arrange <- ggarrange(plotlist=list(v1,v2,v3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNM_counts.png", arrange)
+
+arrange <- ggarrange(plotlist=list(v4,v5,v6), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_eNM_counts.png", arrange)
+
+d2 <- dplot[dplot$intra.extra == "iNM" & dplot$Diagnosis == "CTR",]
+v2 <- violin_plot_function(d2,"ROI","n","Brain Region","iNM (n)", ROI_col)
+v2b <- violin_plot_function(d2,"ROI","n_per.µm2","Brain Region","iNM (n/µm²)", ROI_col)
+
+d2 <- dplot[dplot$intra.extra == "eNM" & dplot$Diagnosis == "CTR",]
+v5 <- violin_plot_function(d2,"ROI","n","Brain Region","eNM (n)", ROI_col)
+v5b <- violin_plot_function(d2,"ROI","n_per.µm2","Brain Region","eNM (n/µm²)", ROI_col)
+
+arrange <- ggarrange(plotlist=list(v2,v5,v2b,v5b), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNMeNM_counts_controls.png", arrange)
+
+
+# plots - normalised to Area
+d2 <- dplot[dplot$intra.extra == "iNM",]
+v1b <- violin_plot_function(d2,"Diagnosis","n_per.µm2","Diagnosis","iNM (n/µm²)", Diagnosis_col)
+v2b <- violin_plot_function(d2,"ROI","n_per.µm2","Brain Region","iNM (n/µm²)", ROI_col)
+v3b <- violin_plot_function(d2,"age_group","n_per.µm2","Age Group","iNM (n/µm²)", age_group_col)
+
+d2 <- dplot[dplot$intra.extra == "eNM",]
+v4b <- violin_plot_function(d2,"Diagnosis","n_per.µm2","Diagnosis","eNM (n/µm²)", Diagnosis_col)
+v5b <- violin_plot_function(d2,"ROI","n_per.µm2","Brain Region","eNM (n/µm²)", ROI_col)
+v6b <- violin_plot_function(d2,"age_group","n_per.µm2","Age Group","eNM (n/µm²)", age_group_col)
+
 
 # ratio intra/extra
-tmp <- df_agg_merged %>% dplyr::count(intracellular, Diagnosis, brainbank_region, Brainregion_2,sort = TRUE)
-tmp <- tmp[tmp$intracellular == "TRUE",]
-tmp2 <- df_agg_merged %>% dplyr::count(extracellular, Diagnosis, brainbank_region, Brainregion_2,sort = TRUE)
-tmp2 <- tmp2[tmp2$extracellular == "TRUE",]
-tmp3 <- merge(tmp,tmp2,by="brainbank_region")
-tmp3$intra.extra.ratio <- tmp3$n.x/tmp3$n.y
-dplot <- tmp3
+tmp <- df_agg_merged[df_agg_merged$intra.extra == "iNM",] %>% dplyr::count(Diagnosis,Brainbank_ID, ROI,age_group, sort = TRUE)
+tmp$brainbank_region <- paste0(tmp$Brainbank_ID,"_",tmp$ROI)
+tmp1 <- tmp
 
-p6 <- ggplot(dplot, aes(x = Brainregion_2.x, y=intra.extra.ratio, fill=Diagnosis.x)) +
-  geom_boxplot(position=position_dodge(1)) + 
-  #facet_grid( ~ Brainregion_2) +
-  scale_fill_brewer(palette='viridis') + theme_classic() +
-  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1),
-        axis.text=element_text(size=10)) + 
-  stat_compare_means( label = "p.signif") + ggtitle("intra:extracellular ratio")
+tmp <- df_agg_merged[df_agg_merged$intra.extra == "eNM",] %>% dplyr::count(Diagnosis,Brainbank_ID, ROI,age_group, sort = TRUE)
+tmp$brainbank_region <- paste0(tmp$Brainbank_ID,"_",tmp$ROI)
+tmp2 <- tmp
 
-ggsave("NM_dist_age.png",p1,device = "png")
-ggsave("NM_dist_dx.png",p2,device = "png")
-ggsave("NM_size_dx.png",p2b,device = "png")
-ggsave("NM_define_intra.extra.png",p3,device = "png")
-ggsave("NM_quant_compare_intra.png",p4,device = "png")
-ggsave("NM_quant_compare_extra.png",p5,device = "png")
-ggsave("NM_quant_compare_intra.extra.png",p6,device = "png")
+tmp3 <- merge(tmp1,tmp2,by="brainbank_region")
+tmp3$intra.extra.ratio.µm2 <- tmp3$n.x/tmp3$n.y
+tmp3 <- tmp3[!is.na(tmp3$Diagnosis.x),]
+
+v7 <- violin_plot_function(tmp3,"Diagnosis.x","intra.extra.ratio.µm2","Diagnosis","iNM (n/µm²) / eNM (n/µm²)", Diagnosis_col)
+v8 <- violin_plot_function(tmp3,"ROI.x","intra.extra.ratio.µm2","Brain Region","iNM (n/µm²) / eNM (n/µm²)", ROI_col)
+v9 <- violin_plot_function(tmp3,"age_group.x","intra.extra.ratio.µm2","Age Group","iNM (n/µm²) / eNM (n/µm²)", age_group_col)
+
+
+arrange <- ggarrange(plotlist=list(v1b,v2b,v3b), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNM_counts.µm2.png", arrange)
+
+arrange <- ggarrange(plotlist=list(v4b,v5b,v6b), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_eNM_counts.µm2.png", arrange)
+
+arrange <- ggarrange(plotlist=list(v7,v8,v9), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNM.eNMratio_counts.png", arrange)
+
+
+############################################################################################
+###### Part 2: Area and Optical density of iNM and eNM
+############################################################################################
+
+dplot <- df_agg_merged[df_agg_merged$intra.extra == "iNM",]
+dplot <- dplot[!is.na(dplot$intra.extra),]
+
+v1 <- violin_plot_function(dplot,"Diagnosis","log10_Area","Diagnosis","iNM Log10(Area [µm²])", Diagnosis_col)
+v2 <- violin_plot_function(dplot,"age_group","log10_Area","age_group","iNM Log10(Area [µm²])", age_group_col)
+v3 <- violin_plot_function(dplot,"ROI","log10_Area","Brain Region","iNM Log10(Area [µm²])", ROI_col)
+
+dplot <- df_agg_merged[df_agg_merged$intra.extra == "eNM",]
+dplot <- dplot[!is.na(dplot$intra.extra),]
+
+v4 <- violin_plot_function(dplot,"Diagnosis","log10_Area","Diagnosis","eNM Log10(Area [µm²])", Diagnosis_col)
+v5 <- violin_plot_function(dplot,"age_group","log10_Area","age_group","eNM Log10(Area [µm²])", age_group_col)
+v6 <- violin_plot_function(dplot,"ROI","log10_Area","Brain Region","eNM Log10(Area [µm²])", ROI_col)
+
+arrange <- ggarrange(plotlist=list(v1,v2,v3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNM_area.png", arrange)
+
+arrange <- ggarrange(plotlist=list(v4,v5,v6), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_eNM_area.png", arrange)
+
+##
+
+dplot <- df_agg_merged[df_agg_merged$intra.extra == "iNM",]
+dplot <- dplot[!is.na(dplot$intra.extra),]
+colnames(dplot) <- make.names(colnames(dplot))
+
+v1 <- violin_plot_function(dplot,"Diagnosis","Mean..Gray.Intensity.Value.","Diagnosis","iNM Optical Density", Diagnosis_col)
+v2 <- violin_plot_function(dplot,"age_group","Mean..Gray.Intensity.Value.","age_group","iNM Optical Density", age_group_col)
+v3 <- violin_plot_function(dplot,"ROI","Mean..Gray.Intensity.Value.","Brain Region","iNM Optical Density", ROI_col)
+
+dplot <- df_agg_merged[df_agg_merged$intra.extra == "eNM",]
+dplot <- dplot[!is.na(dplot$intra.extra),]
+colnames(dplot) <- make.names(colnames(dplot))
+
+v4 <- violin_plot_function(dplot,"Diagnosis","Mean..Gray.Intensity.Value.","Diagnosis","eNM Optical Density", Diagnosis_col)
+v5 <- violin_plot_function(dplot,"age_group","Mean..Gray.Intensity.Value.","age_group","eNM Optical Density", age_group_col)
+v6 <- violin_plot_function(dplot,"ROI","Mean..Gray.Intensity.Value.","Brain Region","eNM Optical Density", ROI_col)
+
+arrange <- ggarrange(plotlist=list(v1,v2,v3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_iNM_opticaldensity.png", arrange)
+
+arrange <- ggarrange(plotlist=list(v4,v5,v6), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_eNM_opticaldensity.png", arrange)
 
 
 
 ############################################################################################
-###### Part 2: Regression analysis of C-SIDE results; brain-region x disease stage
+###### Add NM quantifications to GeoMx Annotations
 ############################################################################################
-# get C-SIDE and PAGE results and format
-setwd(analysis_dir)
-load(rdata)
-barcodes <- colnames(myRCTD@spatialRNA@counts)
-norm_weights <- normalize_weights(myRCTD@results$weights)
-meta <- gxdat_s@meta.data[gxdat_s@meta.data$segment.y != "TH" & gxdat_s$Diagnosis != "NTC",]
-meta <- cbind(meta,norm_weights[row.names(meta),])
+annot_geomx <- read_excel(geomx_annot_path)
 
-# setup design matrix and perform contrast
-brain_regions <- c("A10","A9","A6")
-cell_types <- colnames(norm_weights)
-res_list <- list()
-for (i in 1:length(brain_regions)){
-  run_index <- meta$Brainregion %in% brain_regions[i]
-  targ <- meta[run_index,]
-  colnames(targ) <- make.names(colnames(targ))
-  y <- t(meta[run_index,cell_types]) # C-SIDE cell-types
-  #y <- y + 30 # adjust so not negative
-  
-  targ$DV200 <- as.numeric(targ$DV200)
-  targ$Age <- as.numeric(targ$Age)
-  targ$area <- as.numeric(targ$area)
-  targ$IHC.score <- as.numeric(targ$IHC.score)
-  targ$Dx_cont <- recode(targ$Diagnosis,"CTR" = 1,"ePD" = 2, "ILBD" = 3,"lPD" = 4 )
-  
-  ## Create design matrix
-  design <- model.matrix(~ Dx_cont + Age + Sex + DV200 + area ,data=targ)
-  colnames(design) <- make.names(colnames(design))
-  v <- voom(y,design)
-  vfit <- lmFit(v)
-  
-  # Perform LIMMA contrasts
-  cont.matrix <- makeContrasts(A=Dx_cont,levels=design)
-  fit2 <- contrasts.fit(vfit, cont.matrix)
-  vfit2 <- eBayes(fit2)
-  options(digits=3)
-  
-  # Select significant k-mers for each contrast and bind together
-  topA <- topTable(vfit2,coef="A",number=Inf,sort.by="P")
-  
-  res_list[[i]] <- topA
-}
+# counts per µm²
+dplot <- df_agg_merged %>% dplyr::count(intra.extra,Diagnosis,Brainbank_ID,ROI,age_group,`ROI Area [µm²]`, sort = TRUE)
+dplot <- dplot[!is.na(dplot$intra.extra),]
+dplot$n_per.µm2 <- dplot$n / as.numeric(dplot$`ROI Area [µm²]`)
+dplot$brainbank_region <- paste0(dplot$Brainbank_ID,"_",dplot$ROI)
 
-# plot logFC vs p-value
-pdf("volcano_limma_csidecell_full_res1.pdf")
-EnhancedVolcano(toptable = res_list[[1]], x = "logFC",y = "adj.P.Val",
-                lab = rownames(res_list[[1]]),pCutoff = 0.05,
-                title = brain_regions[1],FCcutoff = 0,xlim = c(-0.05,0.05), ylim = c(0,10),
-                subtitle = "")
-dev.off()
-pdf("volcano_limma_csidecell_full_res2.pdf")
-EnhancedVolcano(toptable = res_list[[2]], x = "logFC",y = "adj.P.Val",
-                lab = rownames(res_list[[2]]),pCutoff = 0.05,
-                title = brain_regions[2],FCcutoff = 0,xlim = c(-0.05,0.05), ylim = c(0,10),
-                subtitle = "")
-dev.off()
-pdf("volcano_limma_csidecell_full_res3.pdf")
-EnhancedVolcano(toptable = res_list[[3]], x = "logFC",y = "adj.P.Val",
-                lab = rownames(res_list[[3]]),pCutoff = 0.05,
-                title = brain_regions[3],FCcutoff = 0,xlim = c(-0.05,0.05), ylim = c(0,10),
-                subtitle = "")
+iNM_n_per.µm2 <- dplot[dplot$intra.extra == "iNM",]
+eNM_n_per.µm2 <- dplot[dplot$intra.extra == "eNM",]
 
-dev.off()
+# mean area
+dplot <- df_agg_merged
+
+tmp <- as.data.frame(dplot %>% dplyr::group_by(Brainbank_ID,ROI, intra.extra) %>%
+  dplyr::summarize(NM_mean.area = mean(`Area [µm²]`, na.rm=TRUE)))
+
+tmp <- tmp[!is.na(tmp$intra.extra),]
+
+iNM_NM_mean.area <- tmp[tmp$intra.extra == "iNM",]
+eNM_NM_mean.area <- tmp[tmp$intra.extra == "eNM",]
+
+# mean optical density
+tmp <- as.data.frame(dplot %>% dplyr::group_by(Brainbank_ID,ROI, intra.extra) %>%
+                       dplyr::summarize(NM_mean.optical.density = mean(`Mean (Gray Intensity Value)`, na.rm=TRUE)))
+
+tmp <- tmp[!is.na(tmp$intra.extra),]
+
+iNM_NM_mean.optical.density <- tmp[tmp$intra.extra == "iNM",]
+eNM_NM_mean.optical.density <- tmp[tmp$intra.extra == "eNM",]
+
+# combine
+iNM_n_per.µm2$Brainbank_ID == eNM_n_per.µm2$Brainbank_ID
+tmp <- merge()
+
+
+#put all data frames into list
+df_list <- list(iNM_n_per.µm2,eNM_n_per.µm2,
+                iNM_NM_mean.area,eNM_NM_mean.area,
+                iNM_NM_mean.optical.density,eNM_NM_mean.optical.density)
+
+#merge all data frames in list
+tmp <- Reduce(function(x, y) merge(x, y, by=c("Brainbank_ID","ROI"),all=TRUE), df_list)
+tmp <- tmp[,c("Brainbank_ID","ROI",
+              "ROI Area [µm²].x","n.x","n_per.µm2.x",
+              "ROI Area [µm²].y","n.y","n_per.µm2.y",
+              "NM_mean.area.x","NM_mean.area.y",
+              "NM_mean.optical.density.x","NM_mean.optical.density.y")]
+colnames(tmp) <- gsub("\\.x",".iNM",colnames(tmp))
+colnames(tmp) <- gsub("\\.y",".eNM",colnames(tmp))
+
+# add to annotatations and write to file
+tmp_m <- merge(annot_geomx, tmp, by = c("Brainbank_ID","ROI"), all.x = TRUE)
+tmp_m <- tmp_m[order(tmp_m$Sample_ID),]
+writexl::write_xlsx(tmp_m,path = paste0(analysis_dir,"/Annotations_nm.xlsx"))
+
+

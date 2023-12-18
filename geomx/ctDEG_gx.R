@@ -13,6 +13,10 @@ library(data.table)
 library(ggplot2)
 library(BiocParallel)
 library(EnhancedVolcano)
+library(viridis)
+library(rstatix)
+library(ComplexHeatmap)
+library(readxl)
 source("/Users/zacc/github_repo/spacexr/R/CSIDE_plots.R")
 register(SerialParam())
 
@@ -20,11 +24,12 @@ register(SerialParam())
 #### Inputs
 ############################################################################################
 
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis"
-rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/geomx_sep2023_seurat.Rdata"
-results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_sep2023/analysis/RCTD_results'
+analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
+rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
+results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/RCTD_results'
+contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contrasts_matrix.xlsx"
 
-# single-cell
+# single-cell data 
 cell_ranger_data = "/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger" # single-cell cell ranger output
 filenames <- list.files("/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger", pattern="*UMAP.tsv", full.names=TRUE) # read in metadata / umap of cell IDs
 cell_id <- do.call(rbind, lapply(filenames,fread))
@@ -32,7 +37,7 @@ cell_id <- do.call(rbind, lapply(filenames,fread))
 cell_id <- cell_id[!cell_id$NAME == "TYPE",]
 
 ############################################################################################
-###### Part 1: RCTD & CSIDE analysis
+###### Part 1: RCTD to obtain cell proportions
 ############################################################################################
 # setwd
 setwd(results_folder)
@@ -47,7 +52,8 @@ if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
   #keep_index <- gxdat_s$Diagnosis == "CTR"
   keep_index <- gxdat_s$Diagnosis != "NTC"
   # load in counts matrix
-  counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
+  #counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
+  counts <- gxdat_s@assays$RNA@counts[,keep_index]  # load in counts matrix
   # create metadata matrix 
   meta <- gxdat_s@meta.data[keep_index,]
   # confirm names
@@ -79,12 +85,26 @@ if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
   myRCTD <- readRDS(file.path(results_folder,'myRCTDde_gx.rds'))
 }
 
-### Exploring the full mode results
+############################################################################################
+###### Part 2: RCTD plots and cell-type proportion differences
+############################################################################################
+### data
 barcodes <- colnames(myRCTD@spatialRNA@counts)
 norm_weights <- normalize_weights(myRCTD@results$weights)
 myRCTD@config$doublet_mode <- "full"
-print(head(norm_weights)) 
+meta <- as.data.frame(gxdat_s@meta.data)
+table(row.names(meta) == row.names(norm_weights))
+dplot <- cbind(meta,norm_weights)
 
+# colour palettes
+Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
+dv200_bin_col = viridis(4)
+segment_col = c("grey","black")
+Brainregion_col = viridis(4)
+area_bin_col = viridis(5)
+ROI_col = viridis(7)
+
+### UMAP plots
 p1 <- plot_puck_continuous(myRCTD@spatialRNA, barcodes, norm_weights[,'SOX6_DDT'], 
                            title ='plot of SOX6_DDT weights', size = 0.5) 
 
@@ -95,132 +115,443 @@ p2 <- plot_puck_continuous(myRCTD@spatialRNA, barcodes, norm_weights[,'CALB1_RBP
 
 ggsave("cside_2_calb1rbp4.png", p2, device = "png")
 
+### Violin plots
+# 1. DaN key genes expression
+tmp <- t(gxdat_s@assays$RNA@data[c("TH","SLC6A2","KCNJ6"),])
+dplot <- cbind(dplot,tmp)
+tmp <- dplot[,c("segment","TH","SLC6A2","KCNJ6")]
 
-############################################################################################
-###### Part X: Run C-SIDE two regions
-############################################################################################
-meta <- gxdat_s@meta.data[gxdat_s@meta.data$segment.y == "TH" & gxdat_s@meta.data$Diagnosis == "CTR" & gxdat_s@meta.data$Brainregion %in% c("A9","A10"),]
-barcodes_run <- row.names(meta)
-myRCTD@config$max_cores <- 8
-cell_type_threshold = 0.001
-agg_cell_types <- aggregate_cell_types(myRCTD, barcodes_run,doublet_mode = F)
-cell_run <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
-
-explanatory.variable <- as.numeric(as.factor(meta$Brainregion)) - 1
-names(explanatory.variable) <-  barcodes_run 
-
-myRCTD_ctr.a9a10 <- run.CSIDE.single(myRCTD,
-                           explanatory.variable,
-                           cell_types = cell_run,
-                           cell_type_threshold = cell_type_threshold,
-                           fdr = 0.25, 
-                           doublet_mode = FALSE) 
-
-save(myRCTD_ctr.a9a10,file="myRCTD_ctr.a9a10")
-
-## CSIDE results
-all_gene_list <- myRCTD_ctr.a9a10@de_results$all_gene_list
-sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val < 0.05,])
-sig_gene_list <- lapply(sig_gene_list, function(x) x[order(x$p_val),])
-lapply(sig_gene_list,head)
-
-## Plots
-# barplot for n sig genes x cell-type
-x = unlist(lapply(sig_gene_list, nrow))
-
-dplot <- as.data.frame(cbind(cell_type=names(x),sig_genes=x))
-dplot$sig_genes <- as.numeric(dplot$sig_genes) 
-
-g2 <- ggplot(dplot, aes(x=reorder(cell_type,-x),y=x)) +
-  geom_bar(stat="identity", width=0.7)+  
-  theme_bw() + theme(axis.text.x = element_text(angle = 90)) +
-  xlab("Cell Type") + ylab("Sig CtDEG's (n)") 
-
-# save plots
-ggsave("ctDEG_results_bar_th.ctr.a10a9rn.png", 
-       ggarrange(g2,nrow=2,ncol=1)
-       , device = "png")
+data_table <- tmp %>% pivot_longer(cols=c("TH","SLC6A2","KCNJ6"),
+                    names_to='Gene',
+                    values_to='Expression')
+# make violin plot
+v1 <- ggviolin( data_table, x = "Gene", y = "Expression", 
+  fill = "segment", color = "segment") 
 
 
-# volcano plots
-dat_tmp <- as.data.frame(all_gene_list$SOX6_DDT)
-v1 <- EnhancedVolcano(toptable = dat_tmp , x = "log_fc",y = "p_val",
-                lab = rownames(dat_tmp),pCutoff = 0.05, FCcutoff = 0.5,
-                title = "volcano_ctDEG_geomx_th.ctr.a10a9rn",subtitle = "")
+#  2. DaN cell proportions in TH +/-
+dplot$DaN <- rowSums(dplot[,c("SOX6_AGTR1","SOX6_DDT", "SOX6_GFRA2","SOX6_PART1", "CALB1_CALCR","CALB1_CRYM_CCDC68",        
+                               "CALB1_GEM","CALB1_PPP1R17","CALB1_RBP4","CALB1_TRHR")])
+x_variable = "segment"
+y_variable = "DaN"
+x_lab = x
+y_lab = paste0(y, " proportion")
+colour_palette = segment_col
+data_table <- dplot[dplot$Diagnosis == "CTR",c(x,y)]
+# make violin plot
+bxp <- ggviolin(
+  data_table, x = x_variable, y = y_variable, 
+  fill = x_variable, palette = colour_palette) + theme(legend.position = "none")
+# perform t-test
+data_table$x <- data_table[, x_variable]
+data_table$y <- data_table[, y_variable]
+stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p")
+# add p-values to plot and save the result
+v2 <- bxp + stat_pvalue_manual(stat.test,
+                                y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                                label = "p.signif") + ylab(y_lab) + xlab(x_lab)
 
-ggsave("ctDEG_results_volcano_th.ctr.a10a9rn.png", 
-       ggarrange(v1,nrow=1,ncol=1)
-       , device = "png")
+arrange <- ggarrange(plotlist=list(v1,v2), nrow=2, ncol=2, widths = c(2,2))
+ggsave("violin_DaN.confirm.png", arrange)
 
-# define genesets
-all_gene_sets = msigdbr(species = "human")
-# using "H: hallmark gene sets"
-# using "C2: curated gene sets"
-# using "C5: ontology gene sets"
-# using "C8: cell type signature gene sets"
-msigdbr_df <- all_gene_sets %>%
-  dplyr::filter(gs_cat == "C5")
 
-# create list for fgseas
-msigdbr_list = split(x = msigdbr_df$gene_symbol, f = msigdbr_df$gs_name)
-
-# select res from list, perform FGSEA and plot results
-#for (i in 1:length(all_gene_list)){
-  i = which(names(sig_gene_list) == "SOX6_DDT" )
-  print(i)
-  res <- as.data.frame(sig_gene_list[[i]])
-  name1 <- names(sig_gene_list)[i]
-  gene_stats <- res$log_fc
-  names(gene_stats) <- row.names(res)
+# 3. quantify neuronal proportions in TH + x region x Dx
+# Violin plot function
+violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, colour_palette) {
+  # make violin plot
+  bxp <- ggviolin(
+    data_table, x = x_variable, y = y_variable, 
+    fill = x_variable, palette = colour_palette,yscale = "log10") + theme(legend.position = "none")
   
-  # FGSEA
-  fgseaRes <- fgsea(pathways = msigdbr_list,
-                    stats    = gene_stats,
-                    minSize  = 15,
-                    maxSize  = 500)
-  fgseaRes <- fgseaRes[order(pval), ]
-  head(fgseaRes)
+  # perform t-test
+  data_table$x <- data_table[, x_variable]
+  data_table$y <- data_table[, y_variable]
+  stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p.adj")
+  print(stat.test)
   
-  # plot
-  topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway]
-  topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway]
-  topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
-  pdf(paste0("FGSEA_C5celltype_cside_th.ctr.a10a9rn",name1,".pdf"))
-  print(plotGseaTable(msigdbr_list[topPathways], gene_stats, fgseaRes,
-                      gseaParam=0.5, pathwayLabelStyle=list(size=6, color="black")))
-  dev.off()
-#}
+  # add p-values to plot and save the result
+  bxp <- bxp + stat_pvalue_manual(stat.test,
+                                  y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                                  label = "p.adj.signif") + ylab(y_lab) + xlab(x_lab)
+  
+  # return object
+  return(bxp)
+}
+
+cell_types <- colnames(norm_weights)
+contrast_matrix <- expand.grid(meta$segment,meta$ROI)
+contrast_matrix <- contrast_matrix[!duplicated(contrast_matrix),]
+dplot$Diagnosis <- as.factor(dplot$Diagnosis)
+levels(dplot$Diagnosis) <- c("CTR","ILBD", "ePD", "lPD")
+  
+for (i in 1:nrow(contrast_matrix)){
+  for (z in 1:length(cell_types)){
+    print(paste0(contrast_matrix[i,2],sep=":",contrast_matrix[i,1]))
+    print(z)
+    x_variable = "Diagnosis"
+    y_variable = cell_types[z]
+    x_lab = paste0(contrast_matrix[i,2],sep=":",contrast_matrix[i,1])
+    y_lab = paste0(y_variable, " proportion")
+    colour_palette = segment_col
+    data_table <- dplot[dplot$ROI == contrast_matrix[i,2] & dplot$segment == contrast_matrix[i,1],c(x_variable,y_variable)]
+    
+    colnames(data_table) <- gsub("-","_",colnames(data_table))
+    y_variable <- gsub("-","_",y_variable)
+    
+    v1 <- violin_plot_function(data_table,x_variable ,y_variable,x_lab,y_lab, Diagnosis_col)
+    arrange <- ggarrange(plotlist=list(v1), nrow=2, ncol=2, widths = c(2,2))
+    ggsave(paste0("violin_cell.type_contrast",x_lab,z,".png"), arrange)
+  }
+}
+
+
+### Heatmap plots
+# aggregate data
+x = norm_weights[meta$segment == "TH",]
+y = meta[meta$segment == "TH",]
+ct_agg_median_th <- as.data.frame(x) %>%
+  group_by(y$ROI,y$Diagnosis) %>% 
+  summarise_all("median")
+
+x = norm_weights[meta$segment != "TH",]
+y = meta[meta$segment != "TH",]
+ct_agg_median_full <- as.data.frame(x) %>%
+  group_by(y$ROI,y$Diagnosis) %>% 
+  summarise_all("median")
+
+# plot data frames
+dplot <- ct_agg_median_th
+dplot1 <- t(dplot[,3:ncol(dplot)])
+
+# column annotations
+anno_df = data.frame(
+  Region = dplot$`y$ROI` ,
+  Dx = dplot$`y$Diagnosis` 
+)
+
+ha = HeatmapAnnotation(df = anno_df,
+                       col = list(Dx = c("CTR" = "grey","ILBD" = "#00AFBB", "ePD" = "#E7B800", "lPD"= "red" ),
+                                  Region = c( "LC" = "#440154FF", "RN" = "#443A83FF",  "SND" = "#31688EFF", 
+                                              "SNL" = "#21908CFF", "SNM" = "#35B779FF", "SNV" = "#8FD744FF", "VTA" = "#FDE725FF"))
+                       )
+# row colors
+tmp <- row.names(dplot1)
+tmp[!grepl("Ex|Inh|SOX6|CALB1",tmp)] <- "red3"  
+tmp[grep("Ex|Inh|SOX6|CALB1",tmp)] <- "grey20"
+row_annotation = c(col = tmp)
+          
+# draw heatmap
+pdf("heatmap_cside_cellprop_TH.pdf")
+hm <- Heatmap(dplot1, cluster_columns = FALSE,
+        top_annotation = ha,
+        column_split=sort(as.factor((dplot$`y$ROI`))),
+        row_names_gp = gpar(col = row_annotation, fontsize = 7),
+        heatmap_legend_param = list(title = "Cell Prop"))
+draw(hm,
+     column_title = "TH ROI's",
+     column_title_gp=grid::gpar(fontsize=16))
+dev.off()
+
+
 
 ############################################################################################
-###### Part X: Run C-SIDE multiple regions
+###### Part 2b: Evaluate the cell-type proportion differences by Dx and Region
 ############################################################################################
-# ## Running CSIDE - regions/ multiple contrasts
-meta <- gxdat_s@meta.data[gxdat_s@meta.data$segment.y != "TH" & gxdat_s@meta.data$Diagnosis == "CTR",]
-barcodes_run <- row.names(meta)
+# use cell-type proportions as expression data
+exp_dat <- t(norm_weights)
+
+# extract meta data
+meta_dat <- as.data.frame(gxdat_s@meta.data)
+table(row.names(meta_dat) == colnames(exp_dat))
+
+# format numerical variables
+meta_dat$DV200 <- as.numeric(meta_dat$DV200)
+meta_dat$Age <- as.numeric(meta_dat$Age)
+meta_dat$n_per.µm2.iNM <- as.numeric(meta_dat$n_per.µm2.iNM)
+meta_dat$n_per.µm2.eNM <- as.numeric(meta_dat$n_per.µm2.eNM)
+meta_dat$Diagnosis_stage <- as.character(meta_dat$Diagnosis)
+meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "CTR"] <- 0
+meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "ILBD"] <- 1
+meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "ePD"] <- 2
+meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "lPD"] <- 3
+meta_dat$Diagnosis_stage <- as.numeric(meta_dat$Diagnosis_stage)
+
+# format factors
+factor_format <- c("Brainbank_ID","Sex","Diagnosis","Brainregion","ROI")
+for (i in 1:length(factor_format)){
+  meta_dat[,factor_format[i]] <- as.factor(meta_dat[,factor_format[i]])
+}
+#meta_dat$Brainregion <- factor(meta_dat$Brainregion, levels=c('A6','A9','RN','A10'))
+
+# read in contrast matrix
+cont_dat <- read_excel(contrast_path, sheet = "LIMMA_Voom")
+cont_dat <- cont_dat[cont_dat$notes == "run",]
+
+## Run Voom
+res <- list() # list to collect results
+for (val in 83:nrow(cont_dat)){
+  # print model number
+  print(cont_dat$model.number[val])
+  
+  # create targets df
+  if (cont_dat$roi[val] != "NA"){
+    print("segment & roi")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$ROI %in% cont_dat$roi[val],]
+  } else if (cont_dat$brainregion[val] != "NA"){
+    print("segment & brainregion")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$Brainregion %in% cont_dat$brainregion[val],]
+  } else {
+    print("segment")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val],]
+  }
+  
+  # create contrast arg list
+  cont_list <- list()
+  cont_vars <- factor_format
+  for (z in 1:length(cont_vars)){
+    contrasts(targ[,cont_vars[z]], contrasts = FALSE)
+    cont_list[[z]] <- contrasts(targ[,cont_vars[z]], contrasts = FALSE)
+  }
+  names(cont_list) <- factor_format
+  
+  # create design matrix
+  options(na.action='na.omit')
+  design <- model.matrix(reformulate(cont_dat$model.matrix[val]),
+                         data=targ, 
+                         drop = FALSE,
+                         contrasts.arg = cont_list)
+  
+  # make names
+  colnames(design) <- make.names(colnames(design))
+  design <- design[,!colnames(design) %in% c("DiagnosisILBD.n_per.µm2.iNM","DiagnosisILBD.n.iNM")]
+  
+  # create expression df & targ with design row.names
+  targ <- targ[row.names(design),]
+  y <- exp_dat[,row.names(targ)]
+  
+  # fit design
+  v <- voom(y,design)
+  vfit <- lmFit(v)
+  
+  # Perform LIMMA contrasts
+  cont.matrix <- makeContrasts(A=cont_dat$contrast[val],levels=design)
+  #cont.matrix <- makeContrasts(A="DiagnosisCTR - DiagnosisILBD",levels=design)
+  fit2 <- contrasts.fit(vfit, cont.matrix)
+  vfit2 <- eBayes(fit2)
+  options(digits=3)
+  
+  # Select significant DEGs and assign to list
+  tmp <- topTable(vfit2,number = Inf,sort.by="P")
+  res[[val]] <- tmp[tmp$P.Value < 0.05,]
+  
+}
+
+# ## SAVE results list
+# cside_cellprop_res <- res
+# save(cside_cellprop_res,cont_dat,file="cside_cellprop.rds")
+
+# ## save results (p< 0.05) to excel spreadsheets
+# # i. name each item by description
+# names_1 <- paste0(cont_dat$description, "(",cont_dat$segment,")")
+# names(voom_res) <- names_1
+
+# plots to check results by group
+# colour palettes
+Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
+Brainregion_col = viridis(3)
+ROI_col = viridis(6)
+
+# Violin plot function
+violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, colour_palette) {
+  # make violin plot
+  bxp <- ggviolin(
+    data_table, x = x_variable, y = y_variable, 
+    fill = x_variable, palette = colour_palette) + theme(legend.position = "none")
+  
+  # perform t-test
+  data_table$x <- data_table[, x_variable]
+  data_table$y <- data_table[, y_variable]
+  stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p.adj")
+  print(stat.test)
+  
+  # add p-values to plot and save the result
+  bxp <- bxp + stat_pvalue_manual(stat.test,
+                                  y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                                  label = "p.adj.signif") + ylab(y_lab) + xlab(x_lab)
+  
+  #return object
+  return(bxp)
+}
+
+# example plots
+dat <- t(norm_weights)
+
+cell_name <- "Ex_LAMP5_BAIAP3"
+cell_type <- dat[cell_name,]
+dplot <- cbind(meta_dat,cell_type)
+dplot <- dplot[dplot$ROI == "SNV" & dplot$segment == "TH",c("Diagnosis","cell_type")]
+#dplot$Brainregion <- factor(dplot$Brainregion)
+
+v1 <- violin_plot_function(dplot,"Diagnosis","cell_type","Diagnosis",paste0(cell_name, " proportion"), Diagnosis_col)
+
+
+
+
+model <- lm(cell_type ~ Diagnosis, data = dplot)
+
+
+
+
+############################################################################################
+###### Part 3: Run C-SIDE 2 regions
+############################################################################################
+### data
+norm_weights <- normalize_weights(myRCTD@results$weights)
+myRCTD@config$doublet_mode <- "full"
+meta <- as.data.frame(gxdat_s@meta.data)
+table(row.names(meta) == row.names(norm_weights))
+dplot <- cbind(meta,norm_weights)
+
+# define thresholds
 cell_type_threshold = 1
-agg_cell_types <- colSums(myRCTD@results$weights[barcodes_run, ])
-cell_run <- names(agg_cell_types)[agg_cell_types > (cell_type_threshold)]
 myRCTD@config$max_cores <- 8
+weight_threshold = 0.1
 
-A9 <- barcodes_run[which(meta$Brainregion == "A9")]
-A10 <- barcodes_run[which(meta$Brainregion == "A10")]
-RN <- barcodes_run[which(meta$Brainregion == "RN")]
-region_list <- list(A9,A10,RN)
+# read in contrast matrix
+cont_dat <- read_excel(contrast_path)
+contrast_matrix <- cont_dat[cont_dat$model == "C-SIDE 2 region",]
+  
+# ## Running CSIDE - contrast per segment and roi
+cside_res <- list()
+for (i in 4:nrow(contrast_matrix)){
+  # define subsets
+  segment_run <- as.character(contrast_matrix[i,"segment"])
+  roi_run <- as.character(contrast_matrix[i,"roi"])
+  print(paste0(segment_run,".", roi_run,".",contrast_matrix$contrast[i]))
+  
+  # get meta data and barcodes
+  meta_run <- meta[meta$segment == segment_run & meta$ROI == roi_run,]
+  barcodes_run <- row.names(meta_run)
+  
+  # get list of cells that pass thresholds
+  agg_cell_types <- aggregate_cell_types(myRCTD, barcodes_run,doublet_mode = F)
+  cell_cell_type_threshold <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
+  cells_weight_threshold <- names(colSums(norm_weights))[colSums(norm_weights) > weight_threshold]
+  cell_run <- intersect(cells_weight_threshold,cell_cell_type_threshold)
 
-X <- build.designmatrix.regions(myRCTD,region_list)
-barcodes2 <- rownames(X)
-myRCTD_ctr.fulla9a10rn <- run.CSIDE(myRCTD, X, barcodes2, cell_run , 
-                              test_mode = 'categorical', gene_threshold = 5e-5, 
-                              doublet_mode = F, cell_type_threshold = cell_type_threshold, fdr = 0.25, weight_threshold = 0, 
-                              log_fc_thresh = 0)
+  # define explanatory variables
+  explanatory.variable <- as.numeric(as.factor(meta_run$Diagnosis == contrast_matrix$contrast[i])) - 1
+  names(explanatory.variable) <-  barcodes_run 
 
-save(myRCTD_ctr.fulla9a10rn,file="myRCTD_ctr.fulla9a10rn")
+  myRCTD_test <- run.CSIDE.single(myRCTD,
+                             explanatory.variable,
+                             cell_types = cell_run,
+                             cell_type_threshold = cell_type_threshold,
+                             weight_threshold = weight_threshold,
+                             fdr = 0.25, 
+                             doublet_mode = FALSE) 
+  
+  ## CSIDE results
+  all_gene_list <- myRCTD_test@de_results$all_gene_list
+  sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val),])
+  cside_res[[i]] <- sig_gene_list
+  names(cside_res[[i]]) <- paste0(segment_run,",", roi_run,",",contrast_matrix$contrast[i],",",names(cside_res[[i]]))
+}
 
-## CSIDE results
-all_gene_list <- myRCTD_ctr.fulla9a10rn@de_results$all_gene_list
-sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val_best < 0.05,])
-sig_gene_list <- lapply(sig_gene_list, function(x) x[order(x$p_val_best),])
-lapply(sig_gene_list,head)
+# ssave results list and contrasts
+# save(cside_res, file = "cside_res_snvsnd.ctrpd.rds")
+
+  
+############################################################################################
+###### Part 4: Run C-SIDE multiple regions
+############################################################################################
+load(rdata)
+norm_weights <- normalize_weights(myRCTD@results$weights)
+myRCTD@config$doublet_mode <- "full"
+meta <- as.data.frame(gxdat_s@meta.data)
+table(row.names(meta) == row.names(norm_weights))
+
+# read in contrast matrix
+cont_dat <- read_excel(contrast_path, sheet = "C-SIDE")
+cont_dat <- cont_dat[cont_dat$notes == "run",]
+
+# params
+cell_type_threshold = 1
+myRCTD@config$max_cores <- 12
+weight_threshold = 0.1
+
+# ## Running CSIDE - regions/ multiple contrasts
+#cside_res <- list()
+for (val in 12:nrow(cont_dat)){
+  print(cont_dat$model.number[val])
+    # define contrast items 
+    contrast_items <- unlist(strsplit(cont_dat$contrast[val],","))
+    
+    # create targets df
+    if (cont_dat$roi[val] != "NA"){
+      print("segment & roi")
+      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$ROI %in% cont_dat$roi[val],]
+      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
+      
+    } else if (cont_dat$brainregion[val] != "NA"){
+      print("segment & brainregion")
+      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$Brainregion %in% cont_dat$brainregion[val],]
+      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
+  
+    } else {
+      print("segment")
+      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val],]
+      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
+      
+    }
+    # get barcodes
+    barcodes_run <- row.names(targ)
+    
+    # build item list and assignment matrix
+    #item_list <- split(barcodes_run, f = droplevels(targ[,colnames(targ) == cont_dat$contrast_column[val]]))
+    item_list <- split(barcodes_run, f = targ[,colnames(targ) == cont_dat$contrast_column[val]])
+    X <- build.designmatrix.regions(myRCTD,item_list)
+    barcodes2 <- rownames(X)
+    
+    # get list of cells that pass thresholds
+    agg_cell_types <- aggregate_cell_types(myRCTD, barcodes_run,doublet_mode = F)
+    cell_cell_type_threshold <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
+    cells_weight_threshold <- names(colSums(norm_weights))[colSums(norm_weights) > weight_threshold]
+    cell_run <- intersect(cells_weight_threshold,cell_cell_type_threshold)
+   
+    # run
+    myRCTD_test <- run.CSIDE(myRCTD, X, barcodes_run, cell_run , 
+                             test_mode = 'categorical', gene_threshold = 5e-5, 
+                             doublet_mode = F, cell_type_threshold = cell_type_threshold, fdr = 0.25, weight_threshold = 0, 
+                             log_fc_thresh = 0)
+    ## CSIDE results
+    all_gene_list <- myRCTD_test@de_results$all_gene_list
+    #sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val_best < 0.05,])
+    sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val_best),])
+    cside_res[[val]] <- sig_gene_list 
+}
+
+# save results list
+#save(cside_res,cont_dat,file="cside_deg.rds")
+
+
+############################################################################################
+###### Part 5: Plots of C-SIDE results
+############################################################################################
+load("cside_deg.rds")
+# check gene in C-SIDE results
+
+for (z in 1:15){
+tmp <- cside_res[[z]]
+print(z)
+  for (i in 1:length(tmp)){
+    print(names(tmp)[i])
+    if (!is.na(tmp[[i]]["RGN","p_val_best"])){
+    if (tmp[[i]]["RGN","p_val_best"] < 0.05){
+    print(tmp[[i]]["PGK1",])
+  }}
+}}
+
 
 ## Plots
 # barplot for n sig genes x cell-type
@@ -338,165 +669,4 @@ p1b <- ggplot(d2, aes(x=Brainregion, y=gene_exp, fill=Diagnosis)) +
 ggsave("boxplot_ATP6V0B_full.ctr.a10a9rn.png", 
        ggarrange(p1b ,nrow=2,ncol=1), device = "png")
 
-
-
-############################################################################################
-###### Part X: LIMMA on norm counts
-############################################################################################
-## linear regression
-barcodes_run <- barcodes[gxdat_s@meta.data$segment.y == "TH" & gxdat_s@meta.data$Diagnosis == "CTR" & gxdat_s@meta.data$Brainregion %in% c("A9","A10")]
-targ <- gxdat_s@meta.data[barcodes_run,]
-y <- gxdat_s@assays$GeoMx@data[,barcodes_run]
-
-# Create design matrix 
-targ$DV200 <- as.numeric(targ$DV200)
-targ$Age <- as.numeric(targ$Age)
-targ$area <- as.numeric(targ$area)
-targ$IHC.score <- as.numeric(targ$IHC.score)
-#targ$Dx_cont <- recode(targ$Diagnosis,"CTR" = 1,"ePD" = 2, "ILBD" = 3,"lPD" = 4 )
-
-## Create design matrix
-design <- model.matrix(~ Brainregion + Age + Sex + DV200 + area ,data=targ)
-colnames(design) <- make.names(colnames(design))
-v <- voom(y,design)
-vfit <- lmFit(v)
-
-# Perform LIMMA contrasts
-cont.matrix <- makeContrasts(A=BrainregionA9,levels=design)
-fit2 <- contrasts.fit(vfit, cont.matrix)
-vfit2 <- eBayes(fit2)
-options(digits=3)
-
-topA <- topTable(vfit2,coef="A",number=Inf,sort.by="P")
-
-# volcano plots
-dat_tmp <- as.data.frame(topA)
-
-EnhancedVolcano(toptable = dat_tmp, y = "adj.P.Val",x = "logFC",
-                lab = rownames(dat_tmp),pCutoff = 0.05, FCcutoff = 0.5,
-                title = "volcano_ctDEG_geomx_CTR_TH_a10.a9",subtitle = "")
-
-
-# define genesets
-all_gene_sets = msigdbr(species = "human")
-# using "H: hallmark gene sets"
-# using "C2: curated gene sets"
-# using "C5: ontology gene sets"
-# using "C8: cell type signature gene sets"
-msigdbr_df <- all_gene_sets %>%
-  dplyr::filter(gs_cat == "C5")
-
-# create list for fgseas
-msigdbr_list = split(x = msigdbr_df$gene_symbol, f = msigdbr_df$gs_name)
-
-# select res from list, perform FGSEA and plot results
-for (i in 1:length(all_gene_list)){
-  res <- as.data.frame(all_gene_list[[i]])
-  name1 <- names(all_gene_list)[i]
-  gene_stats <- res$log_fc_best
-  names(gene_stats) <- row.names(res)
-  
-  # FGSEA
-  fgseaRes <- fgsea(pathways = msigdbr_list,
-                    stats    = gene_stats,
-                    minSize  = 15,
-                    maxSize  = 500,
-                    scoreType = "pos")
-  fgseaRes <- fgseaRes[order(pval), ]
-  head(fgseaRes)
-  
-  # plot
-  topPathwaysUp <- fgseaRes[ES > 0][head(order(pval), n=10), pathway]
-  topPathwaysDown <- fgseaRes[ES < 0][head(order(pval), n=10), pathway]
-  topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
-  pdf(paste0("FGSEA_C5celltype_cside_fullroi.ctr.a10a9rn",name1,".pdf"))
-  print(plotGseaTable(msigdbr_list[topPathways], gene_stats, fgseaRes,
-                      gseaParam=0.5, pathwayLabelStyle=list(size=6, color="black")))
-  dev.off()
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-class_num <- rep(0, length(barcodes)); names(class_num) <- barcodes
-class_num[region_middle] <- 1; class_num[region_right] <- 2
-
-p3  <- plot_class(myRCTD@spatialRNA, barcodes, factor(class_num),  title ='plot of regions')
-# ggsave("cside_3_regionsplit.png", p3, device = "png")
-
-#
-## build design matrix
-regions_list <- list()
-contrast <- mapvalues(gxdat_s@meta.data$run_name,run_names,list_ID)
-for (i in 1:length(unique(contrast))) {
-  regions_list[[i]] <- barcodes[contrast == unique(contrast)[i]]
-}
-regions_list[[i+1]] <- NA
-#
-X <- build.designmatrix.regions(myRCTD,regions_list)
-barcodes <- rownames(X)
-myRCTD <- run.CSIDE(myRCTD, X, barcodes,cell_types = cell_types,
-                    cell_type_threshold = 10,
-                    fdr = 0.05,
-                    doublet_mode = FALSE,
-                    weight_threshold = 0.1,
-                    test_mode = 'categorical')
-#
-saveRDS(myRCTD,file.path(results_folder,'myRCTDde_visium_SN_regions.rds'))
-#
-#CSIDE results
-all_gene_list <- myRCTD@de_results$all_gene_list
-sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val_best < 0.05,])
-
-sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val_best),])
-
-
-
-
-
-
-## Running CSIDE - single
-# select just cobtrol samples
-myRCTD@config$max_cores <- 2
-myRCTD@config$doublet_mode = 'full'
-
-explanatory.variable <- as.numeric(as.factor(mapvalues(gxdat_s@meta.data$run_name,run_names,list_ID))) - 1
-names(explanatory.variable) <-  barcodes
-
-myRCTD <- run.CSIDE.single(myRCTD,
-                           explanatory.variable,
-                           cell_type_threshold = 10,
-                           fdr = 0.05, 
-                           doublet_mode = FALSE,
-                           weight_threshold = 0.1) 
-
-saveRDS(myRCTD,file.path(results_folder,'myRCTDde_gx.rds'))
-
-make_all_de_plots(myRCTD,results_folder)
-
-## CSIDE results
-all_gene_list <- myRCTD@de_results$all_gene_list
-sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val < 0.05,])
-sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val),])
 

@@ -10,13 +10,17 @@ library(dplyr)
 library(ggforce)
 library(ggnewscale)
 library(WGCNA)
-library(ggpubr)
 library(ggplot2)
 library(ggsignif)
 library(readxl)
 library(plyr)
 library(scales)
 library(gridExtra)
+library(openxlsx)
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(viridis)
 
 # check if correct packages loaded
 if(packageVersion("GeomxTools") < "2.1" & 
@@ -38,8 +42,7 @@ run_name = "geomx_oct2023"
 analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
 dcc_file_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/DCC_Files"
 PKCFiles <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/CHA12467/pkcs/Hs_R_NGS_WTA_v1.0.pkc"
-SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/Annotations_remapped.xlsx"
-
+SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/Annotations_nm.xlsx" #Ensure annotations file correctly formatted; Tab = "Sample_ID" & sorted by Sample_ID
 
 # # # Locally produced data from human
 # run_name = "geomx_sep2023"
@@ -63,7 +66,7 @@ SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx
 # SampleAnnotationFile <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/hu_brain_workflow_and_counts_files/Annotations_run1.xls"
 
 ## thresholds
-target_genes_detected_samples.frac = 0 # formally set as 0.1
+target_genes_detected_samples.frac = 0.01 # formally set as 0.1
 min_genes_detected.frac = 0.01 # formally set as 0.1
 
 ############################################################################################
@@ -77,6 +80,7 @@ DCCFiles <- dir(file.path(dcc_file_dir), pattern = ".dcc$", full.names = TRUE)
 # load data
 # NOTE: the data columns of interest need to be present within the SampleAnnotationFile. QC plots will be made for each.
 data_cols_interest <- c("roi","aoi","area","Brainbank_ID","AOI","Brainregion","Brainregion_2","PMD hs","Archive ys-2023","DV200","IHC-score","Age","Sex","Fam","Diagnosis_Broad","Brainbank","Diagnosis")
+
 demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
                          pkcFiles = PKCFiles,
                          phenoDataFile = SampleAnnotationFile,
@@ -85,15 +89,10 @@ demoData <- readNanoStringGeoMxSet(dccFiles = DCCFiles,
                          protocolDataColNames = data_cols_interest,
                          experimentDataColNames = c("panel"))
 
-# aggregate counts accross technical replicates
-
-demoData@assayData$exprs <- demoData@assayData$exprs + demoData@assayData$exprs
-
 # # NOTE: tip on accessing data
 # sData(demoData) # sequencing data metrics for each ROI
 # fData(demoData) # feature data for each probe
 # exprs(demoData) # expression data for each feature x ROI
-
 
 # # protocol suggests shifting 0 to 1 to enable in downstream transformations.
 # # however we find 2.27% of counts == 1 (CHA12467), 5.85% of counts == 1 (hu_brain_001). Hence removal of < 2 should be performed below.
@@ -176,6 +175,10 @@ dplot <- sData(demoData)
 dplot$area <- as.numeric(dplot$area)
 qc_hist5 <- QC_histogram(dplot, "area", col_by,1000, scale_trans = "log10")
 ggsave("qc_5_hist.area.png",qc_hist5, device = "png")
+
+# aggregated for publication
+arrange <- ggarrange(plotlist=list(qc_hist1,qc_hist2,qc_hist3,qc_hist4), nrow=2, ncol=2, widths = c(2,2))
+ggsave("Supp_Fig1.png",arrange, device = "png")
 
 
 # calculate the negative geometric means for each module
@@ -304,7 +307,9 @@ qc_gd_bar <- ggplot(pData(gxdat),
 
 ggsave("qc_7_bar.genedetection.png",qc_gd_bar,device = "png")
 
-# plots prior to segment removal
+
+### Plots ###
+# format data
 dplot <- pData(gxdat)
 col_names <- colnames(dplot)
 for(column in data_cols_interest) {
@@ -316,10 +321,53 @@ dplot$roi_id <- row.names(dplot)
 dplot$area <- as.numeric(dplot$area)
 dplot$DV200 <- as.numeric(dplot$DV200)
 dplot$Age <- as.numeric(dplot$Age)
-  
-# create DV200 and area bins
 dplot <- dplot %>% mutate(dv200_bin = cut(DV200, breaks=5))
+dplot$dv200_bin <- factor(dplot$dv200_bin)
 dplot <- dplot %>% mutate(area_bin = cut(area, breaks=5))
+levels(dplot$Diagnosis) <- c("CTR","ILBD","ePD","lPD")
+
+# colour palettes
+Diagnosis_col = c("grey","#00AFBB", "#E7B800","red")
+dv200_bin_col = viridis(4)
+segment_col = c("grey","black")
+Brainregion_col = viridis(4)
+area_bin_col = viridis(5)
+
+# Violin plot function
+violin_plot_function <- function(data_table, x_variable, y_variable, x_lab, y_lab, colour_palette) {
+  # make violin plot
+  bxp <- ggviolin(
+    data_table, x = x_variable, y = y_variable, 
+    fill = x_variable, palette = colour_palette) + theme(legend.position = "none")
+  
+  # perform t-test
+  data_table$x <- data_table[, x_variable]
+  data_table$y <- data_table[, y_variable]
+  stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p.adj")
+  print(stat.test)
+  
+  # add p-values to plot and save the result
+  bxp <- bxp + stat_pvalue_manual(stat.test,
+                                  y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                                  label = "p.adj.signif") + ylab(y_lab) + xlab(x_lab)
+  
+  # return object
+  return(bxp)
+}
+
+# plots
+v1 <- violin_plot_function(dplot,"Diagnosis","GeneDetectionRate","Diagnosis","Gene Detection Rate (fraction)", Diagnosis_col)
+v2 <- violin_plot_function(dplot,"dv200_bin","GeneDetectionRate","DV200 (bin)","Gene Detection Rate (fraction)",dv200_bin_col)
+v3 <- violin_plot_function(dplot,"Brainregion","GeneDetectionRate","Brain Region","Gene Detection Rate (fraction)",Brainregion_col)
+v4 <- violin_plot_function(dplot,"area_bin","GeneDetectionRate","ROI Area (bin)","Gene Detection Rate (fraction)",area_bin_col)
+
+# t-test of masked and unmasked
+t.test(dplot$GeneDetectionRate[dplot$segment == "TH"],
+       dplot$GeneDetectionRate[dplot$segment != "TH"])
+
+## aggregate plots
+arrange <- ggarrange(plotlist=list(v1,v3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("Fig1.png", arrange)
 
 # plots
 a <- labels2colors(dplot$Brainregion)
@@ -349,65 +397,67 @@ ggsave("qc_10_bar.genedetection.png",qc_gd_3,device = "png")
 dplot$DV200 <- round(as.numeric(dplot$DV200),2)
 qc_gd_4 <- ggplot(dplot, aes(x=reorder(DV200, -DV200), y = GeneDetectionRate * 100, fill=segment)) + 
   geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("DV200") +
-  scale_x_discrete(guide = guide_axis(angle = 45))
+  scale_x_discrete(guide = guide_axis(angle = 45))  
 ggsave("qc_11_box.genedetection.png",qc_gd_4,device = "png")
 
 qc_gd_4b <- ggplot(dplot, aes(x=reorder(Brainbank_ID, -DV200), y = GeneDetectionRate * 100, fill=segment)) + 
   geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Brainbank ID") +
-  scale_x_discrete(guide = guide_axis(angle = 45))
+  scale_x_discrete(guide = guide_axis(angle = 45)) 
 ggsave("qc_11b_box.genedetection.png",qc_gd_4b,device = "png")
-
 
 qc_gd_4c <- ggplot(dplot, aes(x=reorder(Diagnosis, GeneDetectionRate), y = GeneDetectionRate * 100, fill=segment)) + 
   geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Diagnosis") +
-  scale_x_discrete(guide = guide_axis(angle = 45))
+  scale_x_discrete(guide = guide_axis(angle = 45)) + theme_classic() +
+  stat_compare_means( label = "p.signif") 
 ggsave("qc_11c_box.genedetection_dx.png",qc_gd_4c,device = "png")
-
 
 qc_gd_4d <- ggplot(dplot, aes(x=area_bin, y = GeneDetectionRate * 100, fill=segment)) + 
   geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("Area") +
   scale_x_discrete(guide = guide_axis(angle = 45))
 ggsave("qc_11d_box.genedetection_area.png",qc_gd_4d,device = "png")
 
-
 qc_gd_4e <- ggplot(dplot, aes(x=dv200_bin, y = GeneDetectionRate * 100, fill=segment)) + 
-  geom_boxplot() + ylab("Gene Detection Rate (%)") + ylab("Gene Detection Rate (%)") + xlab("DV200") +
-  scale_x_discrete(guide = guide_axis(angle = 45))
+  geom_boxplot() + ylab("Gene Detection Rate (%)") + xlab("DV200") +
+  scale_x_discrete(guide = guide_axis(angle = 45)) + 
+  stat_compare_means( label = "p.signif") 
 ggsave("qc_11e_box.genedetection_dv200.png",qc_gd_4e,device = "png")
+
+## aggregate for publication
+arrange <- ggarrange(plotlist=list(qc_gd_bar,v2,v4), nrow=2, ncol=2, widths = c(2,2))
+ggsave("Supp_Fig2.png", arrange)
 
 # # sequencing data plots
 # dplot <- sData(demoData)
 # dplot$`Saturated (%)` <- as.numeric(unlist(dplot$`Saturated (%)`))
-# 
+#
 # colnames(dplot) <- make.names(colnames(dplot))
 
 # # targeted depth of sequencing; geometric mean of the >95% of saturated samples
 # target_depth <- exp(mean(log(dplot$Raw[which(dplot$Saturated.... > 95)])))
-# 
-# qc_gd_4g <- ggplot(dplot, aes(x=Raw, y = Saturated....)) + 
+#
+# qc_gd_4g <- ggplot(dplot, aes(x=Raw, y = Saturated....)) +
 #   geom_point() + ylab("Saturation (%)") + xlab("Raw Reads") +
 #   geom_vline(xintercept = target_depth, col="red", lty =2)
-#   
-# ggsave("qc_11g_scatter.sat.depth.png",qc_gd_4g,device = "png") 
-# 
+#
+# ggsave("qc_11g_scatter.sat.depth.png",qc_gd_4g,device = "png")
+#
 # # estimate new depth of re-sequencing based on past efficiency
 # new_depth <- 1.6 * 10^9 * 7
 # old_depth <- sum(dplot$Raw)
 # efficiency <- dplot$Raw / old_depth
-# 
+#
 # new_raw <- as.data.frame( dplot$Raw + (efficiency * new_depth))
 # table(new_raw[,1] > target_depth) / length(new_raw[,1])
 # colnames(new_raw) <- "depth"
-# 
+#
 # qc_gd_4h <- ggplot(new_raw, aes(x=depth)) + geom_histogram() +
 #   geom_vline(aes(xintercept=target_depth),color="red", linetype="dashed", size=0.5) +
 #   scale_x_continuous(trans='log10') + theme_bw()
-# 
-# ggsave("qc_11h_reseq.depth.png",qc_gd_4h,device = "png") 
+#
+# ggsave("qc_11h_reseq.depth.png",qc_gd_4h,device = "png")
 
 # remove segments with less than min genes detected threshold
 gxdat <- gxdat[, pData(gxdat)$GeneDetectionRate >= min_genes_detected.frac ]
-
 dim(gxdat)
 
 #Gene Detection Rate
@@ -417,7 +467,7 @@ fData(gxdat)$DetectedSegments <- rowSums(LOQ_Mat, na.rm = TRUE)
 fData(gxdat)$DetectionRate <-
   fData(gxdat)$DetectedSegments / nrow(pData(gxdat))
 
-# Test genes of relevance to Brain and PD
+# Evaluate genes of relevance to Brain and PD
 # Using Neuron markers DaN markers as well as top DEGs identified across cell-types in Smajić et al., Brain, 2022
 goi <- c("CALB1","TH","CADPS2",
          "ST6GALNAC3", # "RP11-556E13.1","NEAT1", # non-coding RNA
@@ -466,6 +516,7 @@ dim(gxdat)
 
 # Write samples that pass quality control to file
 save(gxdat,file=paste0(run_name,"_gt",target_genes_detected_samples.frac,".gs",min_genes_detected.frac,"_qc.gx.Rdata"))
+
 
 # #### selection of samples for visium analysis - done from n=901 data
 # # scale DV200 and gene detected
@@ -517,65 +568,77 @@ save(gxdat,file=paste0(run_name,"_gt",target_genes_detected_samples.frac,".gs",m
 #   dplyr::summarise(n = n())
 
 
-# 
-# ##### tabulation of cohort statistics
-# # create a glm of cohort stats
-# library(stargazer)
-# 
-# dplot$Sex[dplot$Sex %in% c("male","Male")] <- "M"
-# dplot$Sex[dplot$Sex %in% c("female","Female")] <- "F"
-# dplot$Diagnosis <- as.factor(dplot$Diagnosis)
-# 
-# lm.model <- glm(Diagnosis ~ Age + Sex + DV200 + area,family = binomial , data=dplot)
-# 
-# # print glm to file
-# stargazer(lm.model, title="Results", align=TRUE, out="star_descriptive.doc",type = "html")
-# 
-# ## tabulate data for tables
-# tmp <- dplot[!duplicated(dplot$Brainbank),]
-# 
-# # cases 
-# tmp %>%
-#   group_by(Diagnosis,Brainregion) %>%
-#   dplyr::summarise(count = n_distinct(roi_id))
-# 
-# # Age 
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(mean_age = mean(Age,na.rm=TRUE))
-# 
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(sd_age = sd(Age,na.rm=TRUE))
-# 
-# #Sex
-# tmp %>%
-#   group_by(Diagnosis,Sex) %>%
-#   dplyr::summarise(count = n_distinct(Brainbank_ID))
-# 
-# # Dv200
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(mean_dv200 = mean(DV200,na.rm=TRUE))
-# 
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
-# 
-# # Area
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(mean_area = mean(area,na.rm=TRUE))
-# 
-# tmp %>%
-#   distinct(Brainbank_ID, .keep_all=TRUE) %>%
-#   group_by(Diagnosis) %>%
-#   dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
+
+##### tabulation of cohort statistics
+# create a glm of cohort stats
+library(stargazer)
+
+dplot$Sex[dplot$Sex %in% c("male","Male")] <- "M"
+dplot$Sex[dplot$Sex %in% c("female","Female")] <- "F"
+dplot$Diagnosis <- as.factor(dplot$Diagnosis)
+dplot$area <- as.numeric(dplot$area)
+dplot$DV200 <- as.numeric(dplot$DV200)
+dplot$Age <- as.numeric(dplot$Age)
+
+lm.model <- glm(Diagnosis ~ Age + Sex + DV200 + area,family = binomial , data=dplot)
+
+# print glm to file
+stargazer(lm.model, title="Results", align=TRUE, out="star_descriptive.doc",type = "html")
+
+## tabulate data for tables
+tmp <- dplot[!duplicated(paste0(dplot$Brainregion,dplot$Brainbank)),]
+
+# cases
+tmp %>%
+  group_by(Diagnosis,Brainregion) %>%
+  dplyr::summarise(count = n_distinct(Brainbank))
+tmp %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarise(count = n_distinct(Brainbank))
+dplot %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarise(count = n_distinct(roi_id))
+tmp %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarise(count = n_distinct(Brainbank_ID_sub))
+
+# Age
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(mean_age = mean(Age,na.rm=TRUE))
+
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(sd_age = sd(Age,na.rm=TRUE))
+
+#Sex
+tmp %>%
+  group_by(Diagnosis,Sex) %>%
+  dplyr::summarise(count = n_distinct(Brainbank_ID))
+
+# Dv200
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(mean_dv200 = mean(DV200,na.rm=TRUE))
+
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
+
+# Area
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(mean_area = mean(area,na.rm=TRUE))
+
+tmp %>%
+  distinct(Brainbank_ID, .keep_all=TRUE) %>%
+  group_by(Diagnosis) %>%
+  dplyr::summarize(sd_dv200 = sd(DV200,na.rm=TRUE))
 
 
 # ## tabulate data following ROI removal

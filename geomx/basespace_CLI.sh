@@ -153,6 +153,33 @@ $HOME/bs launch application -n 'GeoMx® NGS Pipeline' -i '2163161' --app-version
 # geomx_281023_round1
 
 
+DSP-1001660021814-B-G10.dcc - error processing fastq - geomx_281023_PB
+DSP-1001660021820-F-B10.dcc - error processing fastq - geomx_281023_PF
+
+re-upload reads and re-run
+
+
+# may need to combine technical replicates
+cd /Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023
+mkdir -p merged_reps
+
+# combine technical replicates
+for i in $(awk 'NR>1 {print $1}' Annotations_remapped.txt | grep "DSP-1001660021820-F-B10" ); do
+  echo $i
+  du -sh */${i}*_R1_*.fastq.gz
+  du -sh */${i}*_R2_*.fastq.gz
+
+  # cat files
+  cat */${i}*_R1_*.fastq.gz > merged_reps/${i}_S0_L001_R1_001.fastq.gz
+  cat */${i}*_R2_*.fastq.gz > merged_reps/${i}_S0_L001_R2_001.fastq.gz
+done
+
+# geomx_281023_PEG: upload Y, Run Y
+$HOME/bs create project --name=geomx_281023_rerun --exist-ok --api-server=https://api.aps2.sh.basespace.illumina.com/ --access-token=6c48fb1707d6456d8be5b1ae0986f1bd
+$HOME/bs upload dataset --project=6698693 --api-server=https://api.aps2.sh.basespace.illumina.com/ --access-token=6c48fb1707d6456d8be5b1ae0986f1bd --concurrency=low --exclude '*' --include '*' .
+
+
+
 
 
 
