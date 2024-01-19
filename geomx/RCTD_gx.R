@@ -28,6 +28,7 @@ analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_o
 rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
 results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/RCTD_results_run180124'
 contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contrasts_matrix.xlsx"
+setwd(analysis_dir)
 
 # single-cell data 
 
@@ -52,22 +53,323 @@ contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contra
 ## merged dataset ## 
 ## ## ## ## ## ## ## 
 load("/Users/zacc/USyd/spatial_transcriptomics/data/public_datasets/merged_kam.sil.web_seurat.Rdata")
-# subset for cell-types of interest
+
+
 # NOTE; taking excitatory, inhibitory and non-neurons from Kamath, NE and 5-HT from Webber, DA neuron populations from Siletti re-code
 toMatch <- c("Ex_","Inh_","Astro_","Endo_","Ependyma_","Macro_","MG_","Olig_","OPC_","5HT","NE",
              names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"])))
 group1 <- grep(paste(toMatch,collapse="|"), merge.combined.sct@meta.data$cell_type_merge)
 sc_obj <- merge.combined.sct[,group1]
 
-# remove cell-types with <25 cells
+# # remove cell-types with <25 cells
+# cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
+# sc_obj <- sc_obj[,sc_obj@meta.data$cell_type_merge %in% cells_keep]
+# # get count data
+# DefaultAssay(sc_obj) <- "SCT"
+# counts_sc <- sc_obj[["SCT"]]$counts
+# # set cell types and quant nUMI
+# cell_types <- setNames(sc_obj@meta.data$cell_type_merge, colnames(sc_obj))
+# cell_types <- as.factor(cell_types)
+# nUMIsc <- colSums(counts_sc)
+
+############################################################################################
+###### Part 1: Create ground-truths from snRNAseq datasets used for decon
+############################################################################################
+### create ground-truths from snRNAseq data
+siletti_DA_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"]) /
+  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"]))
+
+kamath_all <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"])
+toMatch <- c("Ex_","Inh_","Astro_","Endo_","Ependyma_","Macro_","MG_","Olig_","OPC_")
+group1 <- grep(paste(toMatch,collapse="|"), names(kamath_all))
+kamath_nonDA <- kamath_all[group1]
+kamath_nonDA_truth <- kamath_nonDA/ sum(kamath_nonDA)
+
+kamath_all_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"]) /
+  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"]))
+
+webber_LC_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"]) /
+  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"]))
+
+# stacked barplots of each
+dplot <- as.data.frame(siletti_DA_truth)
+colnames(dplot) <- c("Cell","Proportion")
+dplot$group <- "Siletti re Reference"
+
+g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) + 
+  geom_bar(stat = "identity") + xlab("")
+
+
+############################################################################################
+###### Part 1: RCTD to obtain cell proportions
+############################################################################################
+# setwd
+setwd(results_folder)
+
+# i) format geomx spatial data
+# load geomx normalised data
+load(rdata)
+# select samples
+#keep_index <- gxdat_s$Diagnosis == "CTR"
+keep_index <- gxdat_s$Diagnosis != "NTC"
+# load in counts matrix
+#counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
+counts <- gxdat_s@assays$RNA@counts[,keep_index]  # load in counts matrix
+# create metadata matrix 
+meta <- gxdat_s@meta.data[keep_index,]
+# confirm names
+table(colnames(counts) == row.names(meta))
+# load in coordinates
+coords = as.data.frame(gxdat_s@reductions$umap@cell.embeddings[keep_index,]) # we are using UMAP coordinates as dummy variables until we obtain DSP ROI locations
+colnames(coords) <- c("imagerow","imagecol")
+# process counts
+nUMI <- colSums(counts) # In this case, total counts per spot
+
+
+# ii) deconvolute TH+ ROIs SN using Siletti
+# construct ST to deconvolute for SN tissue
+group2 <- meta$ROI %in% c("SND","SNL","SNM","SNV")
+puck <- SpatialRNA(coords[group2,], counts[,group2], nUMI[group2])
+barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
+plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
+
+# construct references
+# NOTE; taking DA neuron populations from Siletti re-code
+toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"])))
+group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
+sc_obj <- merge.combined.sct[ ,group1]
+
+# remove cell-types with < 25 cells
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
 sc_obj <- sc_obj[,sc_obj@meta.data$cell_type_merge %in% cells_keep]
-# default assay is "integrated"
-DefaultAssay(sc_obj)
+# get count data and restrict to only genes within GeoMx
+counts_sc <- sc_obj[["RNA"]]$counts
+counts_sc <- counts_sc[row.names(counts_sc) %in% row.names(puck@counts),]
+
 # set cell types and quant nUMI
 cell_types <- setNames(sc_obj@meta.data$cell_type_merge, colnames(sc_obj))
 cell_types <- as.factor(cell_types)
-nUMIsc <- colSums(sc_obj[["SCT"]]$counts)
+nUMIsc <- colSums(counts_sc)
+## create reference
+reference <- Reference(counts_sc, cell_types, nUMIsc)
+
+##  run RCTD
+myRCTD <- create.RCTD(puck, reference, max_cores = 8)
+myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+
+# iii) compare to ground truth
+roi_interest <- unique(meta_select$ROI)
+res <- list()
+for (i in 1:length(roi_interest)){
+  # select CTR TH+
+  meta_select <- meta[group2,]
+  norm_weights <- normalize_weights(myRCTD@results$weights)
+  norm_weights_sub <- norm_weights[meta_select$Diagnosis == "CTR" & meta_select$segment == "TH" & meta_select$ROI %in% roi_interest[i],]
+  
+  # stacked barplots of each
+  m1 <- colMeans(norm_weights_sub)
+  dplot1 <- as.data.frame(cbind(Cell = names(m1),Proportion = m1))
+  dplot1$group <- paste0("CTR, TH+, ",roi_interest[i])
+  res[[i]] <- dplot1
+  
+}
+
+# combine with snRNAseq and plot
+dplot1 <- do.call("rbind", res)
+dplot <- as.data.frame(siletti_DA_truth)
+colnames(dplot) <- c("Cell","Proportion")
+dplot$group <- "Siletti re Reference"
+
+dplot <- rbind(dplot,dplot1)
+dplot$Proportion <- as.numeric(dplot$Proportion)
+
+g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) + 
+  geom_bar(stat = "identity") + xlab("") + theme_bw()
+
+# save data
+ggsave("barplots_siletti_TH.CTR.png", g1)
+
+
+
+
+# ii) deconvolute Full RIs in SN using Kamath
+# construct ST to deconvolute for SN tissue
+group2 <- meta$ROI %in% c("SND","SNL","SNM","SNV")
+puck <- SpatialRNA(coords[group2,], counts[,group2], nUMI[group2])
+barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
+plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
+
+# construct references
+# NOTE; taking all cells from Kamath
+toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"])))
+group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
+sc_obj <- merge.combined.sct[ ,group1]
+
+# remove cell-types with < 25 cells
+cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
+sc_obj <- sc_obj[,sc_obj@meta.data$cell_type_merge %in% cells_keep]
+# get count data and restrict to only genes within GeoMx
+counts_sc <- sc_obj[["RNA"]]$counts
+counts_sc <- counts_sc[row.names(counts_sc) %in% row.names(puck@counts),]
+
+# set cell types and quant nUMI
+cell_types <- setNames(sc_obj@meta.data$cell_type_merge, colnames(sc_obj))
+cell_types <- as.factor(cell_types)
+nUMIsc <- colSums(counts_sc)
+## create reference
+reference <- Reference(counts_sc, cell_types, nUMIsc)
+
+##  run RCTD
+myRCTD <- create.RCTD(puck, reference, max_cores = 8)
+myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+
+# iii) compare to ground truth
+meta_select <- meta[group2,]
+roi_interest <- unique(meta_select$ROI)
+res <- list()
+for (i in 1:length(roi_interest)){
+  # select CTR TH+
+  norm_weights <- normalize_weights(myRCTD@results$weights)
+  norm_weights_sub <- norm_weights[meta_select$Diagnosis == "CTR" & meta_select$segment == "Full ROI" & meta_select$ROI %in% roi_interest[i],]
+  
+  # stacked barplots of each
+  m1 <- colMeans(norm_weights_sub)
+  dplot1 <- as.data.frame(cbind(Cell = names(m1),Proportion = m1))
+  dplot1$group <- paste0("CTR, Full ROI, ",roi_interest[i])
+  res[[i]] <- dplot1
+  
+}
+
+# combine with snRNAseq and plot
+dplot1 <- do.call("rbind", res)
+dplot <- as.data.frame(kamath_all_truth)
+colnames(dplot) <- c("Cell","Proportion")
+dplot$group <- "Kamath Reference"
+
+dplot <- rbind(dplot,dplot1)
+dplot$Proportion <- as.numeric(dplot$Proportion)
+
+g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) + 
+  geom_bar(stat = "identity",colour="black") + xlab("") + theme_bw()
+
+# save data
+ggsave("barplots_kamath_Full.CTR.png", g1)
+
+
+
+# iv) deconvolute Full ROIs in LC using Webber
+# construct ST to deconvolute for SN tissue
+group2 <- meta$ROI %in% c("LC")
+puck <- SpatialRNA(coords[group2,], counts[,group2], nUMI[group2])
+barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
+plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
+
+# construct references
+# NOTE; taking all cells from Kamath
+toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"])))
+group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
+sc_obj <- merge.combined.sct[ ,group1]
+
+# remove cell-types with < 25 cells
+cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
+sc_obj <- sc_obj[,sc_obj@meta.data$cell_type_merge %in% cells_keep]
+# get count data and restrict to only genes within GeoMx
+counts_sc <- round(10^sc_obj[["RNA"]]$counts,0)
+counts_sc <- counts_sc[row.names(counts_sc) %in% row.names(puck@counts),]
+
+# set cell types and quant nUMI
+cell_types <- setNames(sc_obj@meta.data$cell_type_merge, colnames(sc_obj))
+cell_types <- as.factor(cell_types)
+nUMIsc <- colSums(counts_sc)
+## create reference
+reference <- Reference(counts_sc, cell_types, nUMIsc)
+
+##  run RCTD
+myRCTD <- create.RCTD(puck, reference, max_cores = 8)
+myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+
+# iii) compare to ground truth
+meta_select <- meta[group2,]
+roi_interest <- unique(meta_select$ROI)
+res <- list()
+for (i in 1:length(roi_interest)){
+  # select CTR TH+
+  norm_weights <- normalize_weights(myRCTD@results$weights)
+  norm_weights_sub <- norm_weights[meta_select$Diagnosis == "CTR" & meta_select$segment == "TH" & meta_select$ROI %in% roi_interest[i],]
+  
+  # stacked barplots of each
+  m1 <- colMeans(norm_weights_sub)
+  dplot1 <- as.data.frame(cbind(Cell = names(m1),Proportion = m1))
+  dplot1$group <- paste0("CTR, TH, ",roi_interest[i])
+  res[[i]] <- dplot1
+  
+}
+
+# combine with snRNAseq and plot
+dplot1 <- do.call("rbind", res)
+dplot <- as.data.frame(webber_LC_truth)
+colnames(dplot) <- c("Cell","Proportion")
+dplot$group <- "Webber Reference"
+
+dplot <- rbind(dplot,dplot1)
+dplot$Proportion <- as.numeric(dplot$Proportion)
+
+g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) + 
+  geom_bar(stat = "identity",colour="black") + xlab("") + theme_bw()
+
+# save data
+ggsave("barplots_webber_TH.LC.CTR.png", g1)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Data Preprocessing and running RCTD
+if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
+  
+  ## spatial data
+  # load geomx normalised data
+  load(rdata)
+  # select samples
+  #keep_index <- gxdat_s$Diagnosis == "CTR"
+  keep_index <- gxdat_s$Diagnosis != "NTC"
+  # load in counts matrix
+  #counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
+  counts <- gxdat_s@assays$RNA@counts[,keep_index]  # load in counts matrix
+  # create metadata matrix 
+  meta <- gxdat_s@meta.data[keep_index,]
+  # confirm names
+  table(colnames(counts) == row.names(meta))
+  # load in coordinates
+  coords = as.data.frame(gxdat_s@reductions$umap@cell.embeddings[keep_index,]) # we are using UMAP coordinates as dummy variables until we obtain DSP ROI locations
+  colnames(coords) <- c("imagerow","imagecol")
+  # process counts
+  nUMI <- colSums(counts) # In this case, total counts per spot
+  puck <- SpatialRNA(coords, counts, nUMI)
+  barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
+  plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
+  
+  ## create reference and run RCTD
+  reference <- Reference(counts_sc, cell_types, nUMIsc)
+  myRCTD <- create.RCTD(puck, reference, max_cores = 8)
+  myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+  saveRDS(myRCTD,file.path(results_folder,'myRCTDde_gx.rds'))
+} else {
+  myRCTD <- readRDS(file.path(results_folder,'myRCTDde_gx.rds'))
+}
+
+
+
+
 
 ############################################################################################
 ###### Part 1: RCTD to obtain cell proportions
@@ -101,13 +403,16 @@ if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
   plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
   
   ## create reference and run RCTD
-  reference <- Reference(sc_obj[["SCT"]]$counts, cell_types, nUMIsc)
+  reference <- Reference(counts_sc, cell_types, nUMIsc)
   myRCTD <- create.RCTD(puck, reference, max_cores = 8)
   myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
   saveRDS(myRCTD,file.path(results_folder,'myRCTDde_gx.rds'))
 } else {
   myRCTD <- readRDS(file.path(results_folder,'myRCTDde_gx.rds'))
 }
+
+
+
 
 ############################################################################################
 ###### Part 2: RCTD plots and cell-type proportion differences
@@ -129,8 +434,8 @@ area_bin_col = viridis(5)
 ROI_col = viridis(7)
 
 ### UMAP plots
-p1 <- plot_puck_continuous(myRCTD@spatialRNA, barcodes, norm_weights[,'SOX6_DDT'], 
-                           title ='plot of SOX6_DDT weights', size = 0.5) 
+p1 <- plot_puck_continuous(myRCTD@spatialRNA, barcodes, norm_weights[,'NE'], 
+                           title ='plot of SOX6_AGTR1_NOX4 weights', size = 0.5) 
 
 ggsave("cside_1_sox6dtt.png", p1, device = "png")
 
@@ -146,16 +451,16 @@ dplot <- cbind(dplot,tmp)
 tmp <- dplot[,c("segment","TH","SLC6A2","KCNJ6")]
 
 data_table <- tmp %>% pivot_longer(cols=c("TH","SLC6A2","KCNJ6"),
-                    names_to='Gene',
-                    values_to='Expression')
+                                   names_to='Gene',
+                                   values_to='Expression')
 # make violin plot
 v1 <- ggviolin( data_table, x = "Gene", y = "Expression", 
-  fill = "segment", color = "segment") 
+                fill = "segment", color = "segment") 
 
 
 #  2. DaN cell proportions in TH +/-
 dplot$DaN <- rowSums(dplot[,c("SOX6_AGTR1","SOX6_DDT", "SOX6_GFRA2","SOX6_PART1", "CALB1_CALCR","CALB1_CRYM_CCDC68",        
-                               "CALB1_GEM","CALB1_PPP1R17","CALB1_RBP4","CALB1_TRHR")])
+                              "CALB1_GEM","CALB1_PPP1R17","CALB1_RBP4","CALB1_TRHR")])
 x_variable = "segment"
 y_variable = "DaN"
 x_lab = x
@@ -172,8 +477,8 @@ data_table$y <- data_table[, y_variable]
 stat.test <- data_table %>% t_test(y ~ x) %>% add_significance("p")
 # add p-values to plot and save the result
 v2 <- bxp + stat_pvalue_manual(stat.test,
-                                y.position = max(data_table$y) * 1.4, step.increase = 0.1,
-                                label = "p.signif") + ylab(y_lab) + xlab(x_lab)
+                               y.position = max(data_table$y) * 1.4, step.increase = 0.1,
+                               label = "p.signif") + ylab(y_lab) + xlab(x_lab)
 
 arrange <- ggarrange(plotlist=list(v1,v2), nrow=2, ncol=2, widths = c(2,2))
 ggsave("violin_DaN.confirm.png", arrange)
@@ -207,7 +512,7 @@ contrast_matrix <- expand.grid(meta$segment,meta$ROI)
 contrast_matrix <- contrast_matrix[!duplicated(contrast_matrix),]
 dplot$Diagnosis <- as.factor(dplot$Diagnosis)
 levels(dplot$Diagnosis) <- c("CTR","ILBD", "ePD", "lPD")
-  
+
 for (i in 1:nrow(contrast_matrix)){
   for (z in 1:length(cell_types)){
     print(paste0(contrast_matrix[i,2],sep=":",contrast_matrix[i,1]))
@@ -257,20 +562,20 @@ ha = HeatmapAnnotation(df = anno_df,
                        col = list(Dx = c("CTR" = "grey","ILBD" = "#00AFBB", "ePD" = "#E7B800", "lPD"= "red" ),
                                   Region = c( "LC" = "#440154FF", "RN" = "#443A83FF",  "SND" = "#31688EFF", 
                                               "SNL" = "#21908CFF", "SNM" = "#35B779FF", "SNV" = "#8FD744FF", "VTA" = "#FDE725FF"))
-                       )
+)
 # row colors
 tmp <- row.names(dplot1)
 tmp[!grepl("Ex|Inh|SOX6|CALB1",tmp)] <- "red3"  
 tmp[grep("Ex|Inh|SOX6|CALB1",tmp)] <- "grey20"
 row_annotation = c(col = tmp)
-          
+
 # draw heatmap
 pdf("heatmap_cside_cellprop_TH.pdf")
 hm <- Heatmap(dplot1, cluster_columns = FALSE,
-        top_annotation = ha,
-        column_split=sort(as.factor((dplot$`y$ROI`))),
-        row_names_gp = gpar(col = row_annotation, fontsize = 7),
-        heatmap_legend_param = list(title = "Cell Prop"))
+              top_annotation = ha,
+              column_split=sort(as.factor((dplot$`y$ROI`))),
+              row_names_gp = gpar(col = row_annotation, fontsize = 7),
+              heatmap_legend_param = list(title = "Cell Prop"))
 draw(hm,
      column_title = "TH ROI's",
      column_title_gp=grid::gpar(fontsize=16))
@@ -444,7 +749,7 @@ weight_threshold = 0.1
 # read in contrast matrix
 cont_dat <- read_excel(contrast_path)
 contrast_matrix <- cont_dat[cont_dat$model == "C-SIDE 2 region",]
-  
+
 # ## Running CSIDE - contrast per segment and roi
 cside_res <- list()
 for (i in 4:nrow(contrast_matrix)){
@@ -462,18 +767,18 @@ for (i in 4:nrow(contrast_matrix)){
   cell_cell_type_threshold <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
   cells_weight_threshold <- names(colSums(norm_weights))[colSums(norm_weights) > weight_threshold]
   cell_run <- intersect(cells_weight_threshold,cell_cell_type_threshold)
-
+  
   # define explanatory variables
   explanatory.variable <- as.numeric(as.factor(meta_run$Diagnosis == contrast_matrix$contrast[i])) - 1
   names(explanatory.variable) <-  barcodes_run 
-
+  
   myRCTD_test <- run.CSIDE.single(myRCTD,
-                             explanatory.variable,
-                             cell_types = cell_run,
-                             cell_type_threshold = cell_type_threshold,
-                             weight_threshold = weight_threshold,
-                             fdr = 0.25, 
-                             doublet_mode = FALSE) 
+                                  explanatory.variable,
+                                  cell_types = cell_run,
+                                  cell_type_threshold = cell_type_threshold,
+                                  weight_threshold = weight_threshold,
+                                  fdr = 0.25, 
+                                  doublet_mode = FALSE) 
   
   ## CSIDE results
   all_gene_list <- myRCTD_test@de_results$all_gene_list
@@ -485,7 +790,7 @@ for (i in 4:nrow(contrast_matrix)){
 # ssave results list and contrasts
 # save(cside_res, file = "cside_res_snvsnd.ctrpd.rds")
 
-  
+
 ############################################################################################
 ###### Part 4: Run C-SIDE multiple regions
 ############################################################################################
@@ -508,51 +813,51 @@ weight_threshold = 0.1
 #cside_res <- list()
 for (val in 12:nrow(cont_dat)){
   print(cont_dat$model.number[val])
-    # define contrast items 
-    contrast_items <- unlist(strsplit(cont_dat$contrast[val],","))
-    
-    # create targets df
-    if (cont_dat$roi[val] != "NA"){
-      print("segment & roi")
-      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$ROI %in% cont_dat$roi[val],]
-      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
-      
-    } else if (cont_dat$brainregion[val] != "NA"){
-      print("segment & brainregion")
-      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$Brainregion %in% cont_dat$brainregion[val],]
-      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
+  # define contrast items 
+  contrast_items <- unlist(strsplit(cont_dat$contrast[val],","))
   
-    } else {
-      print("segment")
-      targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val],]
-      targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
-      
-    }
-    # get barcodes
-    barcodes_run <- row.names(targ)
+  # create targets df
+  if (cont_dat$roi[val] != "NA"){
+    print("segment & roi")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$ROI %in% cont_dat$roi[val],]
+    targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
     
-    # build item list and assignment matrix
-    #item_list <- split(barcodes_run, f = droplevels(targ[,colnames(targ) == cont_dat$contrast_column[val]]))
-    item_list <- split(barcodes_run, f = targ[,colnames(targ) == cont_dat$contrast_column[val]])
-    X <- build.designmatrix.regions(myRCTD,item_list)
-    barcodes2 <- rownames(X)
+  } else if (cont_dat$brainregion[val] != "NA"){
+    print("segment & brainregion")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val] & meta_dat$Brainregion %in% cont_dat$brainregion[val],]
+    targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
     
-    # get list of cells that pass thresholds
-    agg_cell_types <- aggregate_cell_types(myRCTD, barcodes_run,doublet_mode = F)
-    cell_cell_type_threshold <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
-    cells_weight_threshold <- names(colSums(norm_weights))[colSums(norm_weights) > weight_threshold]
-    cell_run <- intersect(cells_weight_threshold,cell_cell_type_threshold)
-   
-    # run
-    myRCTD_test <- run.CSIDE(myRCTD, X, barcodes_run, cell_run , 
-                             test_mode = 'categorical', gene_threshold = 5e-5, 
-                             doublet_mode = F, cell_type_threshold = cell_type_threshold, fdr = 0.25, weight_threshold = 0, 
-                             log_fc_thresh = 0)
-    ## CSIDE results
-    all_gene_list <- myRCTD_test@de_results$all_gene_list
-    #sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val_best < 0.05,])
-    sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val_best),])
-    cside_res[[val]] <- sig_gene_list 
+  } else {
+    print("segment")
+    targ <- meta_dat[meta_dat$segment %in% cont_dat$segment[val],]
+    targ <- targ[targ[,colnames(targ) == cont_dat$contrast_column[val]] %in% contrast_items,]
+    
+  }
+  # get barcodes
+  barcodes_run <- row.names(targ)
+  
+  # build item list and assignment matrix
+  #item_list <- split(barcodes_run, f = droplevels(targ[,colnames(targ) == cont_dat$contrast_column[val]]))
+  item_list <- split(barcodes_run, f = targ[,colnames(targ) == cont_dat$contrast_column[val]])
+  X <- build.designmatrix.regions(myRCTD,item_list)
+  barcodes2 <- rownames(X)
+  
+  # get list of cells that pass thresholds
+  agg_cell_types <- aggregate_cell_types(myRCTD, barcodes_run,doublet_mode = F)
+  cell_cell_type_threshold <- names(agg_cell_types)[agg_cell_types > cell_type_threshold]
+  cells_weight_threshold <- names(colSums(norm_weights))[colSums(norm_weights) > weight_threshold]
+  cell_run <- intersect(cells_weight_threshold,cell_cell_type_threshold)
+  
+  # run
+  myRCTD_test <- run.CSIDE(myRCTD, X, barcodes_run, cell_run , 
+                           test_mode = 'categorical', gene_threshold = 5e-5, 
+                           doublet_mode = F, cell_type_threshold = cell_type_threshold, fdr = 0.25, weight_threshold = 0, 
+                           log_fc_thresh = 0)
+  ## CSIDE results
+  all_gene_list <- myRCTD_test@de_results$all_gene_list
+  #sig_gene_list <- lapply(all_gene_list, function(x) x[x$p_val_best < 0.05,])
+  sig_gene_list <- lapply(all_gene_list, function(x) x[order(x$p_val_best),])
+  cside_res[[val]] <- sig_gene_list 
 }
 
 # save results list
@@ -566,15 +871,15 @@ load("cside_deg.rds")
 # check gene in C-SIDE results
 
 for (z in 1:15){
-tmp <- cside_res[[z]]
-print(z)
+  tmp <- cside_res[[z]]
+  print(z)
   for (i in 1:length(tmp)){
     print(names(tmp)[i])
     if (!is.na(tmp[[i]]["RGN","p_val_best"])){
-    if (tmp[[i]]["RGN","p_val_best"] < 0.05){
-    print(tmp[[i]]["PGK1",])
+      if (tmp[[i]]["RGN","p_val_best"] < 0.05){
+        print(tmp[[i]]["PGK1",])
+      }}
   }}
-}}
 
 
 ## Plots
