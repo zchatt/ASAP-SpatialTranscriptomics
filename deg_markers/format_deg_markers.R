@@ -95,4 +95,4 @@ names(smajic_traj) <- paste0("Smajić.2022.", deg_names)
 deg_list <- c(ferraro_deg_list,smajic_deg,smajic_traj)
 
 # save marker genes
-# save(deg_df, file=paste0(git_repo_location,"deg_list.published.R"))
+# save(deg_list, file=paste0(git_repo_location,"deg_list.published.R"))
