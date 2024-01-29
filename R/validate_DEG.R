@@ -184,7 +184,7 @@ ht <- Heatmap(log10(counts), name = "Log10(Counts)",
               row_names_gp = gpar(fontsize = 6))
 
 # assign plot data
-name_plot = "hits_aavgq.SN.TH_n14"
+name_plot = "hits_aavgq.SN.TH_n15"
 #name_plot = "hits_aavgq.SN.TH_n59"
 
 # plot
