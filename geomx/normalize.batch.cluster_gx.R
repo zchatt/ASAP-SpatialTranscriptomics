@@ -25,6 +25,11 @@ run_name = "geomx_oct2023"
 analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
 rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_gt0.01.gs0.01_qc.gx.Rdata"
 
+# run_name = "geomx_oct2023_min"
+# analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis_min"
+# rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis_min/geomx_oct2023_min_gt0.gs0.01_qc.gx.Rdata"
+# 
+
 ############################################################################################
 #### Part 1 : Convert to Seurat object and quantile normalise
 ############################################################################################
@@ -42,7 +47,8 @@ row.names(norm_quant) <- row.names(raw)
 # convert to Seurat object 
 #gxdat_s <- as.Seurat(gxdat,ident = "SampleID", normData = "exprs", forceRaw=TRUE) # no longer working
 gxdat_s <- CreateSeuratObject(as.matrix(norm_quant), meta.data = sData(gxdat))
-gxdat_s@assays$RNA@counts <- raw
+gxdat_s@assays$RNA$counts <- raw
+gxdat_s@assays$RNA$data <- norm_quant
 
 # add metadata
 tmp <- gxdat_s@meta.data
