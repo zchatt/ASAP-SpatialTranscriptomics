@@ -3,7 +3,7 @@
 # libraries
 source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/convenience/giotto_env.R")
 library(preprocessCore)
-library(Giotto)
+1library(Giotto)
 library(Seurat)
 library(ggpubr)
 library(harmony)

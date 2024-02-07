@@ -7,6 +7,7 @@ library(ggpubr)
 library(rstatix)
 library(spacexr)
 library(Seurat)
+library(lmer)
 
 ###############
 ### Input
@@ -40,7 +41,7 @@ source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/convenience/plotting
 # colour palettes
 Diagnosis_col = c("CTR"= "grey","ILBD" = "#00AFBB", "ePD" = "#E7B800","lPD" = "red")
 age_group_col = magma(4)
-ROI_col = c("SNV" = viridis(6)[1],
+ROI_col = c("SNV" = "purple",
             "SNM" = viridis(6)[2],
             "SND" = viridis(6)[3],
             "SNL" = viridis(6)[4],
@@ -747,24 +748,6 @@ ggsave("Violin_Full.ROI_Dx_PGK1_2.png", arrange)
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ############################################################################################
 ###### Part X: Post C-SIDE; GSEA and plotting
 ############################################################################################
@@ -879,13 +862,7 @@ for (i in 1:length(cside_res)){
 
 
 
-
-
-
-
-
-
-############################################################################################
+###############################################################################
 ###### Part 3: Examing DaN subtypes with unique function
 ############################################################################################
 
@@ -945,5 +922,190 @@ draw(hm,
      column_title = "Genes interest in Kamath et al",
      column_title_gp=grid::gpar(fontsize=16))
 #dev.off()
+
+
+
+
+
+####################################################################
+### Part ?: Examining random genes of interest in GeoMx datasets ### 
+####################################################################
+# 1 # comparing ROIs within Control subjects
+## GeoMx data ##
+exp_dat <- as.matrix(gxdat_s@assays$RNA$data)
+meta_dat <- as.data.frame(gxdat_s@meta.data)
+
+# Genes of interest
+#gene_name <- c("CHCHD10","CHCHD2","SNCA","PDHA1")
+#gene_name <- c("CACNA1C","CACNA1H","KCND3")
+#gene_name <- c("KCND3","SNCA")
+#gene_name <- c("CACNA2D1","KCNIP1","KCNA10","KCNC1","HCN1")
+gene_name <- c("CACNA1C","CACNA1H","KCND3","CACNA2D1","KCNIP1","KCNA10","KCNC1","HCN1")
+
+# test which genes are not present
+gene_name[!gene_name %in% row.names(exp_dat)]
+# gene_name <- gene_name[gene_name %in% row.names(exp_dat)]
+gene <- exp_dat[gene_name,]
+dplot <- cbind(meta_dat,t(gene))
+dplot <- as.data.frame(dplot)
+data_table <- dplot[dplot$segment == "Full ROI" & dplot$ROI %in% c("SNV","VTA") & dplot$Diagnosis == "CTR",]
+colnames(data_table) <- make.names(colnames(data_table))
+data_table <- data_table[,c("ROI","Brainbank_ID","Age","Sex","PMD.hs","DV200","Diagnosis",gene_name)]
+
+# linear mixed-effects model and violin plots
+y_list <- gene_name
+for(i in 1:length(y_list)){
+  print(i)
+  # define variables
+  x_variable = "ROI"
+  y_variable = y_list[i]
+  x_lab = "ROI"
+  y_lab = "Normalized Expression"
+  #colour_palette = ROI_col 
+  colour_palette = ROI_col[c("SNV","VTA")]
+  ymax <- max(data_table[,y_variable]) * 1.6
+  yp <- max(data_table[,y_variable]) * 1.3
+  
+  # Fit a linear mixed-effects model
+  model <- lmer(formula(paste(eval(y_variable),"~",x_variable," + (1 | Brainbank_ID) + (1 | Age) + (1 | Sex) + (1 | PMD.hs) + (1 | DV200)")), data = data_table)
+  
+  # perform post-hoc tests to compare different regions using Tukey method
+  posthoc <- glht(model, linfct = mcp(ROI = "Tukey"))
+  summary(posthoc)
+  
+  # format for plotting
+  tmp <- aggregate(formula(paste(y_variable," ~ ",x_variable)), data_table, mean)
+  fact_lvls <- tmp[order(-tmp[,y_variable]),][,x_variable]
+  data_table[,x_variable] <- factor(data_table[,x_variable], levels = fact_lvls)
+  
+  # make violin plot 
+  bxp <- ggviolin(
+    data_table, x = x_variable, y = y_variable, 
+    fill = x_variable, palette = colour_palette) + theme(legend.position = "none") + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + ylab(y_lab) + xlab(x_lab) + 
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + stat_summary(fun.data=mean_sdl, mult=1, 
+                                                                                     geom="pointrange", color="black") + ylim(0,250)
+  
+  # set x and y in data_table for plotting
+  data_table$x <- data_table[, x_variable]
+  data_table$y <- data_table[, y_variable]
+  
+  # create stat.test df
+  summary_posthoc <- summary(posthoc)
+  group1 = gsub(" ","",unlist(lapply(strsplit(names(summary_posthoc$test$coefficients),"-"), function(x) x[1])))
+  group2 = gsub(" ","",unlist(lapply(strsplit(names(summary_posthoc$test$coefficients),"-"), function(x) x[2])))
+  p.adj = as.numeric(summary_posthoc$test$pvalues)
+  stat.test <- as.data.frame(cbind(group1,group2,p.adj))
+  stat.test$p.adj <- as.numeric(stat.test$p.adj)
+  stat.test$p.adj.signif <- symnum(stat.test$p.adj, corr = FALSE, na = FALSE, 
+                                   cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+                                   symbols = c("***", "**", "*", ".", " "))
+  print(stat.test)
+  
+  # get sig values
+  if(length(stat.test$p.adj < 0.05) > 0){
+    # add p-values to plot and save the result
+    stat.test <- stat.test[stat.test$p.adj < 0.05, ]
+    bxp <- bxp + stat_pvalue_manual(stat.test,
+                                    y.position = yp, step.increase = 0.1,
+                                    label = "p.adj.signif") 
+  }
+  
+  # save plot
+  res[[i]] <- bxp
+  
+}
+
+tmp_plot <- res[[1]]
+arrange <- ggarrange(plotlist=list(tmp_plot,res[[1]]), nrow=2, ncol=2, widths = c(2,2), labels=c("TH+","Full"), label.x =0.8)
+#ggsave("violin_TH.CTR_KCND3.pdf", arrange)
+
+
+
+# 2 # comparing ROIs between Controls and PD within each ROI
+dplot <- as.data.frame(dplot)
+data_table <- dplot[dplot$segment == "Full ROI" & dplot$ROI %in% c("SNV","VTA") ,]
+colnames(data_table) <- make.names(colnames(data_table))
+data_table <- data_table[,c("ROI","Brainbank_ID","Age","Sex","PMD.hs","DV200","Diagnosis",gene_name)]
+
+# linear mixed-effects modeland violin plots
+y_list <- gene_name[1]
+res <- list()
+res_stat <- list()
+roi_uniq <- unique(data_table$ROI)
+for(z in 1:length(roi_uniq)){
+  print(z)
+  roi_cont <- roi_uniq[z]
+  data_table2 <- data_table[data_table$ROI == roi_cont,]
+  for(i in 1:length(y_list)){
+    print(i)
+    # define variables
+    x_variable = "Diagnosis"
+    y_variable = y_list[i]
+    x_lab = "Diagnosis"
+    y_lab = "Normalized Expression"
+    colour_palette = Diagnosis_col
+    ymax <- max(data_table[,y_variable]) * 1.6
+    yp <- max(data_table[,y_variable]) * 1.3
+    
+    # Fit a linear mixed-effects model
+    model <- lmer(formula(paste(eval(y_variable),"~",x_variable," + (1 | Brainbank_ID) + (1 | Age) + (1 | Sex) + (1 | PMD.hs) + (1 | DV200)")), data = data_table2)
+    
+    # perform post-hoc tests to compare different regions using Tukey method
+    posthoc <- glht(model, linfct = mcp(Diagnosis = "Tukey"))
+    summary(posthoc)
+    
+    # format for plotting
+    tmp <- aggregate(formula(paste(y_variable," ~ ",x_variable)), data_table2, mean)
+    fact_lvls <- tmp[order(-tmp[,y_variable]),][,x_variable]
+    data_table2[,x_variable] <- factor(data_table2[,x_variable], levels = fact_lvls)
+    
+    # make violin plot 
+    bxp <- ggviolin(
+      data_table2, x = x_variable, y = y_variable, 
+      fill = x_variable, palette = colour_palette) + theme(legend.position = "none") + 
+      theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + ggtitle(roi_cont) + 
+      ylab(y_lab) + xlab(x_lab) + stat_summary(fun.data=mean_sdl, mult=1,geom="pointrange", color="black") + ylim(0,250)
+    
+    # set x and y in data_table2 for plotting
+    data_table2$x <- data_table2[, x_variable]
+    data_table2$y <- data_table2[, y_variable]
+    
+    # create stat.test df
+    summary_posthoc <- summary(posthoc)
+    group1 = gsub(" ","",unlist(lapply(strsplit(names(summary_posthoc$test$coefficients),"-"), function(x) x[1])))
+    group2 = gsub(" ","",unlist(lapply(strsplit(names(summary_posthoc$test$coefficients),"-"), function(x) x[2])))
+    p.adj = as.numeric(summary_posthoc$test$pvalues)
+    stat.test <- as.data.frame(cbind(group1,group2,p.adj))
+    stat.test$p.adj <- as.numeric(stat.test$p.adj)
+    stat.test$p.adj.signif <- symnum(stat.test$p.adj, corr = FALSE, na = FALSE, 
+                                     cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+                                     symbols = c("***", "**", "*", ".", " "))
+    print(stat.test)
+    
+    # get sig values
+    if(any(stat.test$p.adj < 0.05)){
+      print("test")
+      # add p-values to plot and save the result
+      stat.test <- stat.test[stat.test$p.adj < 0.05, ]
+      bxp <- bxp + stat_pvalue_manual(stat.test,
+                                      y.position = yp, step.increase = 0.1,
+                                      label = "p.adj.signif") 
+    }
+    
+    # save stat.test as dataframe
+    stat.test$ROI <- roi_cont
+    stat.test$y_variable <- y_variable
+    res_stat[[z]] <- stat.test
+    
+    # save plot
+    #ggsave(paste("violin_iNM.",y_variable,".",x_lab,".",roi_cont,".png"), bxp)
+  }
+  res[[z]] <- bxp
+}
+
+arrange <- ggarrange(plotlist=res, nrow=2, ncol=2, widths = c(2,2))
+ggsave("Vln_TH.CTR.PD_KCND3.pdf", arrange)
+
 
 
