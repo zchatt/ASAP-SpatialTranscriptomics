@@ -14,6 +14,7 @@ run_name = "geomx_oct2023"
 analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/"
 rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
 contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contrasts_matrix.xlsx" # file with all regression models
+NM_data <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/nm_data_090224.Rdata"
 
 # source plotting functions
 source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/convenience/plotting_functions.R")
@@ -34,6 +35,7 @@ exp_dat <- as.matrix(gxdat_s@assays$RNA$counts)
 # extract meta data
 meta_dat <- as.data.frame(gxdat_s@meta.data)
 table(row.names(meta_dat) == colnames(exp_dat))
+meta_dat$scan_id <- row.names(meta_dat)
 
 # format numerical variables
 meta_dat$DV200 <- as.numeric(meta_dat$DV200)
@@ -46,6 +48,30 @@ meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "ILBD"] <- 1
 meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "ePD"] <- 2
 meta_dat$Diagnosis_stage[meta_dat$Diagnosis_stage == "lPD"] <- 3
 meta_dat$Diagnosis_stage <- as.numeric(meta_dat$Diagnosis_stage)
+meta_dat$id <-  paste(meta_dat$Brainbank_ID,sep=".",meta_dat$ROI)
+
+# load NM data 
+load(NM_data)
+# summarise iNM per ROI per subject
+data_table <- df_agg_merged[df_agg_merged$intra.extra == "iNM" ,c("Brainbank_ID","ROI","Area [µm²]")]
+df <- data_table %>%
+  group_by(Brainbank_ID, ROI) %>%
+  summarize_at(vars(-group_cols()), mean, na.rm = TRUE)
+df$id <- paste(df$Brainbank_ID,sep=".",df$ROI)
+# merge
+meta_dat <- merge(meta_dat,df,by=c("id"), all = T)
+meta_dat <- meta_dat[!is.na(meta_dat$`scan name`),]
+colnames(meta_dat) <- make.names(colnames(meta_dat))
+meta_dat$Brainbank_ID <- meta_dat$Brainbank_ID.x
+meta_dat$ROI <- meta_dat$ROI.x
+row.names(meta_dat) <- meta_dat$scan_id
+
+# assign ROIs to high/ low iNM areas based on quantile's
+quantiles <- quantile(meta_dat$Area..µm.., probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+meta_dat$iNM_quantile <- cut(meta_dat$Area..µm.., breaks = quantiles, include.lowest = TRUE, 
+                       labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+
+meta_dat$iNM_quantile <- factor(meta_dat$iNM_quantile, levels = c("3rd_Q","1st_Q", "2nd_Q", "4th_Q") )
 
 # format factors
 factor_format <- c("Brainbank_ID","Sex","Diagnosis","Brainregion","ROI")
@@ -61,7 +87,7 @@ cont_dat <- cont_dat[cont_dat$notes == "run",]
 
 ## Run Voom
 res <- list() # list to collect results
-for (val in 136:nrow(cont_dat)){
+for (val in 146:nrow(cont_dat)){
   # print model number
   print(cont_dat$model.number[val])
   
