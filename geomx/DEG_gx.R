@@ -6,6 +6,7 @@ library(metafor)
 library(openxlsx)
 library(viridis)
 library(ggpubr)
+library(dplyr)
 
 ############################################################################################
 #### Inputs
@@ -52,8 +53,9 @@ meta_dat$id <-  paste(meta_dat$Brainbank_ID,sep=".",meta_dat$ROI)
 
 # load NM data 
 load(NM_data)
-# summarise iNM per ROI per subject
-data_table <- df_agg_merged[df_agg_merged$intra.extra == "iNM" ,c("Brainbank_ID","ROI","Area [µm²]")]
+
+# 1) summarise iNM Area per per SNV and LC per subject
+data_table <- df_agg_iNM[df_agg_iNM$intra.extra == "iNM" ,c("Brainbank_ID","ROI","Area..µm..")]
 df <- data_table %>%
   group_by(Brainbank_ID, ROI) %>%
   summarize_at(vars(-group_cols()), mean, na.rm = TRUE)
@@ -65,13 +67,103 @@ colnames(meta_dat) <- make.names(colnames(meta_dat))
 meta_dat$Brainbank_ID <- meta_dat$Brainbank_ID.x
 meta_dat$ROI <- meta_dat$ROI.x
 row.names(meta_dat) <- meta_dat$scan_id
-
 # assign ROIs to high/ low iNM areas based on quantile's
 quantiles <- quantile(meta_dat$Area..µm.., probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
 meta_dat$iNM_quantile <- cut(meta_dat$Area..µm.., breaks = quantiles, include.lowest = TRUE, 
                        labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
-
 meta_dat$iNM_quantile <- factor(meta_dat$iNM_quantile, levels = c("3rd_Q","1st_Q", "2nd_Q", "4th_Q") )
+
+
+
+# 2) calculate group-wise % of toxic, protective etc iNM granules
+data_table <- df_agg_iNM[!df_agg_iNM$iNM_cluster %in% "young CTR",]
+colnames(data_table) <- make.names(colnames(data_table))
+dplot <- data_table %>% dplyr::count(intra.extra,Diagnosis,Brainbank_ID, ROI, Brainregion,Age,Sex,PMD,iNM_cluster,ROI.Area..µm.., sort = TRUE)
+dplot <- dplot[!is.na(dplot$intra.extra),]
+dplot$case.region <- paste0(dplot$Brainbank_ID,sep=".",dplot$ROI)
+
+# select each clusetr
+d1 <- dplot[dplot$iNM_cluster == "protective",]
+d2 <- dplot[dplot$iNM_cluster == "novel",]
+d3 <- dplot[dplot$iNM_cluster == "toxic",]
+d4 <- dplot[dplot$iNM_cluster == "neutral",]
+
+tmp <- merge(d1,d2[,c("case.region","n")], by="case.region",all=TRUE)
+colnames(tmp)[colnames(tmp) %in% c("n.x","n.y")] <- c("n.1","n.2")
+tmp <- merge(tmp,d3[,c("case.region","n")], by="case.region",all=TRUE)
+colnames(tmp)[colnames(tmp) %in% c("n")] <- c("n.3")
+tmp <- merge(tmp,d4[,c("case.region","n")], by="case.region",all=TRUE)
+colnames(tmp)[colnames(tmp) %in% c("n")] <- c("n.4")
+
+tmp[is.na(tmp)] <- 0
+tmp <- tmp[complete.cases(tmp),]
+
+tmp$protective_prc.total <- tmp$n.1 / (tmp$n.1 + tmp$n.2 + tmp$n.3 + tmp$n.4) * 100
+tmp$novel_prc.total <- tmp$n.2 / (tmp$n.1 + tmp$n.2 + tmp$n.3 + tmp$n.4) * 100
+tmp$toxic_prc.total <- tmp$n.3 / (tmp$n.1 + tmp$n.2 + tmp$n.3 + tmp$n.4) * 100
+tmp$neutral_prc.total <- tmp$n.4 / (tmp$n.1 + tmp$n.2 + tmp$n.3 + tmp$n.4) * 100
+
+# assign to quantile's to SNV and LC separately 
+tmp2 <- tmp[tmp$ROI == "SNV",]
+
+quantiles <- quantile(tmp2$protective_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$protective_quantile<- cut(tmp2$protective_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                               labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$protective_quantile <- as.character(tmp2$protective_quantile)
+
+quantiles <- quantile(tmp2$toxic_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$toxic_quantile<- cut(tmp2$toxic_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$toxic_quantile <- as.character(tmp2$toxic_quantile)
+
+quantiles <- quantile(tmp2$novel_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$novel_quantile<- cut(tmp2$novel_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$novel_quantile <- as.character(tmp2$novel_quantile)
+
+quantiles <- quantile(tmp2$neutral_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$neutral_quantile<- cut(tmp2$neutral_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                            labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$neutral_quantile <- as.character(tmp2$neutral_quantile)
+
+
+tmp2 <- tmp[tmp$ROI == "LC",]
+
+quantiles <- quantile(tmp2$protective_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$protective_quantile<- cut(tmp2$protective_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                               labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$protective_quantile <- as.character(tmp2$protective_quantile)
+
+quantiles <- quantile(tmp2$toxic_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$toxic_quantile<- cut(tmp2$toxic_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$toxic_quantile <- as.character(tmp2$toxic_quantile)
+
+quantiles <- quantile(tmp2$novel_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$novel_quantile<- cut(tmp2$novel_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$novel_quantile <- as.character(tmp2$novel_quantile)
+
+quantiles <- quantile(tmp2$neutral_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+tmp2$neutral_quantile<- cut(tmp2$neutral_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                            labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+tmp2$neutral_quantile <- as.character(tmp2$neutral_quantile)
+
+
+
+
+# mapvalues
+meta_dat$protective_quantile <- mapvalues(meta_dat$id, from = tmp$case.region, to = tmp$protective_quantile)
+meta_dat$protective_quantile[!meta_dat$protective_quantile %in% c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q")] <- 0
+
+meta_dat$toxic_quantile<- mapvalues(meta_dat$id, from = tmp$case.region, to = tmp$toxic_quantile)
+meta_dat$toxic_quantile[!meta_dat$toxic_quantile %in% c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q")] <- 0
+
+meta_dat$novel_quantile <- mapvalues(meta_dat$id, from = tmp$case.region, to = tmp$novel_quantile)
+meta_dat$novel_quantile[!meta_dat$novel_quantile %in% c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q")] <- 0
+
+meta_dat$neutral_quantile <- mapvalues(meta_dat$id, from = tmp$case.region, to = tmp$neutral_quantile)
+meta_dat$neutral_quantile[!meta_dat$neutral_quantile %in% c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q")] <- 0
 
 # format factors
 factor_format <- c("Brainbank_ID","Sex","Diagnosis","Brainregion","ROI")
@@ -87,7 +179,7 @@ cont_dat <- cont_dat[cont_dat$notes == "run",]
 
 ## Run Voom
 res <- list() # list to collect results
-for (val in 146:nrow(cont_dat)){
+for (val in 147:nrow(cont_dat)){
   # print model number
   print(cont_dat$model.number[val])
   
@@ -141,10 +233,18 @@ for (val in 146:nrow(cont_dat)){
   
   # Select significant DEGs and assign to list
   tmp <- topTable(vfit2,number = Inf,sort.by="P")
+  tmp2 <- tmp[tmp$adj.P.Val < 0.05,]
   res[[val]] <- tmp[tmp$P.Value < 0.05,]
 
 }
 
+
+
+# DEG enrichment within pigment related gene-sets
+yf_pigment_genes <- unlist(read.delim(file="/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis_min/pigmentation+YuHong.genes.txt", header = F)[,1])
+
+index1 <- which(names(vfit2$t[,1]) %in% yf_pigment_genes)
+geneSetTest <- cameraPR(vfit2$t[,1],index1)
 
 # i. name each item by description
 voom_res <- res
