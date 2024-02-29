@@ -97,7 +97,7 @@ g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) +
 
 
 ############################################################################################
-###### Part 1: RCTD to obtain cell proportions
+###### Part 2: RCTD to obtain cell proportions
 ############################################################################################
 # setwd
 setwd(results_folder)
@@ -154,8 +154,6 @@ reference <- Reference(counts_sc, cell_types, nUMIsc)
 myRCTD <- create.RCTD(puck, reference, max_cores = 8)
 myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
 
-#
-
 # iii) compare to ground truth
 roi_interest <- unique(meta_select$ROI)
 res <- list()
@@ -187,8 +185,6 @@ g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) +
 
 # save data
 ggsave("barplots_siletti_TH.CTR.png", g1)
-
-
 
 
 # ii) deconvolute Full RIs in SN using Kamath
@@ -326,45 +322,11 @@ ggsave("barplots_webber_TH.LC.CTR.png", g1)
 
 
 
+# NOTE: Below are scripts previously used when just deconvoluting using the Kamath et al. reference.
+# There will be handy scripts for plotting and performing cell-type specific DEG analysis.
 
 
 
-
-
-
-### Data Preprocessing and running RCTD
-if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
-  
-  ## spatial data
-  # load geomx normalised data
-  load(rdata)
-  # select samples
-  #keep_index <- gxdat_s$Diagnosis == "CTR"
-  keep_index <- gxdat_s$Diagnosis != "NTC"
-  # load in counts matrix
-  #counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
-  counts <- gxdat_s@assays$RNA@counts[,keep_index]  # load in counts matrix
-  # create metadata matrix 
-  meta <- gxdat_s@meta.data[keep_index,]
-  # confirm names
-  table(colnames(counts) == row.names(meta))
-  # load in coordinates
-  coords = as.data.frame(gxdat_s@reductions$umap@cell.embeddings[keep_index,]) # we are using UMAP coordinates as dummy variables until we obtain DSP ROI locations
-  colnames(coords) <- c("imagerow","imagecol")
-  # process counts
-  nUMI <- colSums(counts) # In this case, total counts per spot
-  puck <- SpatialRNA(coords, counts, nUMI)
-  barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
-  plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
-  
-  ## create reference and run RCTD
-  reference <- Reference(counts_sc, cell_types, nUMIsc)
-  myRCTD <- create.RCTD(puck, reference, max_cores = 8)
-  myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
-  saveRDS(myRCTD,file.path(results_folder,'myRCTDde_gx.rds'))
-} else {
-  myRCTD <- readRDS(file.path(results_folder,'myRCTDde_gx.rds'))
-}
 
 
 
@@ -409,8 +371,6 @@ if(!file.exists(file.path(results_folder,'myRCTDde_gx.rds'))) {
 } else {
   myRCTD <- readRDS(file.path(results_folder,'myRCTDde_gx.rds'))
 }
-
-
 
 
 ############################################################################################
