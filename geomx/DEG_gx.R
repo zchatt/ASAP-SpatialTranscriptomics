@@ -7,6 +7,7 @@ library(openxlsx)
 library(viridis)
 library(ggpubr)
 library(dplyr)
+library(plyr)
 
 ############################################################################################
 #### Inputs
@@ -116,9 +117,9 @@ tmp2$toxic_quantile<- cut(tmp2$toxic_prc.total, breaks = quantiles, include.lowe
                           labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
 tmp2$toxic_quantile <- as.character(tmp2$toxic_quantile)
 
-quantiles <- quantile(tmp2$novel_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
+quantiles <- quantile(tmp2$novel_prc.total, probs = c(0, 0.5, 0.75, 1),na.rm =T)
 tmp2$novel_quantile<- cut(tmp2$novel_prc.total, breaks = quantiles, include.lowest = TRUE, 
-                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+                          labels = c("1st_Q", "3rd_Q", "4th_Q")) # note labelled as 1st_Q for regression purposed
 tmp2$novel_quantile <- as.character(tmp2$novel_quantile)
 
 quantiles <- quantile(tmp2$neutral_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
@@ -126,6 +127,7 @@ tmp2$neutral_quantile<- cut(tmp2$neutral_prc.total, breaks = quantiles, include.
                             labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
 tmp2$neutral_quantile <- as.character(tmp2$neutral_quantile)
 
+tmp_snv <- tmp2
 
 tmp2 <- tmp[tmp$ROI == "LC",]
 
@@ -134,9 +136,9 @@ tmp2$protective_quantile<- cut(tmp2$protective_prc.total, breaks = quantiles, in
                                labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
 tmp2$protective_quantile <- as.character(tmp2$protective_quantile)
 
-quantiles <- quantile(tmp2$toxic_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
-tmp2$toxic_quantile<- cut(tmp2$toxic_prc.total, breaks = quantiles, include.lowest = TRUE, 
-                          labels = c("1st_Q", "2nd_Q", "3rd_Q", "4th_Q"))
+quantiles <- quantile(tmp2$toxic_prc.total, probs = c(0, 0.5, 0.75, 1),na.rm =T)
+tmp2$toxic_quantile <- cut(tmp2$toxic_prc.total, breaks = quantiles, include.lowest = TRUE, 
+                          labels = c("1st_Q", "3rd_Q", "4th_Q")) # note labelled as 1st_Q for regression purposed
 tmp2$toxic_quantile <- as.character(tmp2$toxic_quantile)
 
 quantiles <- quantile(tmp2$novel_prc.total, probs = c(0, 0.25, 0.5, 0.75, 1),na.rm =T)
@@ -150,7 +152,7 @@ tmp2$neutral_quantile<- cut(tmp2$neutral_prc.total, breaks = quantiles, include.
 tmp2$neutral_quantile <- as.character(tmp2$neutral_quantile)
 
 
-
+tmp <- rbind(tmp_snv,tmp2)
 
 # mapvalues
 meta_dat$protective_quantile <- mapvalues(meta_dat$id, from = tmp$case.region, to = tmp$protective_quantile)
@@ -179,7 +181,7 @@ cont_dat <- cont_dat[cont_dat$notes == "run",]
 
 ## Run Voom
 res <- list() # list to collect results
-for (val in 147:nrow(cont_dat)){
+for (val in 146:nrow(cont_dat)){
   # print model number
   print(cont_dat$model.number[val])
   
@@ -234,17 +236,11 @@ for (val in 147:nrow(cont_dat)){
   # Select significant DEGs and assign to list
   tmp <- topTable(vfit2,number = Inf,sort.by="P")
   tmp2 <- tmp[tmp$adj.P.Val < 0.05,]
-  res[[val]] <- tmp[tmp$P.Value < 0.05,]
+  print(nrow(tmp2))
+  res[[val]] <- tmp
 
 }
 
-
-
-# DEG enrichment within pigment related gene-sets
-yf_pigment_genes <- unlist(read.delim(file="/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis_min/pigmentation+YuHong.genes.txt", header = F)[,1])
-
-index1 <- which(names(vfit2$t[,1]) %in% yf_pigment_genes)
-geneSetTest <- cameraPR(vfit2$t[,1],index1)
 
 # i. name each item by description
 voom_res <- res
@@ -274,6 +270,10 @@ write.xlsx(diag, file = "Brainregion_LIMMA_Voom.xlsx", row.names = FALSE)
 
 diag <- res[which(cont_dat$concept_bin == "Neuromelanin")]
 write.xlsx(diag, file = "Neuromelanin_LIMMA_Voom.xlsx", row.names = FALSE)
+
+diag <- res[146:151]
+write.xlsx(diag, file = "Neuromelanin_classified_LIMMA_Voom.xlsx", row.names = FALSE)
+
 
 ############################################################################################
 ###### Part 2: Exploratory plots of LIMMA Voom results
@@ -374,3 +374,17 @@ lapply(cside_res, function(x) {
   
   }
   )
+
+
+############################################################################################
+###### Part 3: Exploratory plots of LIMMA Voom results
+############################################################################################
+
+# DEG enrichment within pigment related gene-sets
+yf_pigment_genes <- unlist(read.delim(file="/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis_min/pigmentation+YuHong.genes.txt", header = F)[,1])
+
+index1 <- which(names(vfit2$t[,1]) %in% yf_pigment_genes)
+geneSetTest <- cameraPR(vfit2$t[,1],index1)
+
+
+

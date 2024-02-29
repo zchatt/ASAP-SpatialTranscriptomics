@@ -1,5 +1,4 @@
-# Details: Scripts used for human validation of DEGs identified by chemogenetic (DREADD) mouse model to chronically hyperactivate of DA neurons.
-# As described in manuscript "Chronic hyperactivation of midbrain dopamine neurons causes preferential dopamine neuron degeneration"
+# Details: Scripts used for human validation of DEGs identified by CHCHD2 point mutant (PM) mouse model, replicating this autosomal dominant form of PD. 
 
 library(readxl)
 library(stringr)
@@ -12,14 +11,12 @@ library(dplyr)
 library(ggpubr)
 library(stargazer)
 library(edgeR)
-library(EnhancedVolcano)
 
 ############################################################################################
 #### Inputs
 ############################################################################################
 results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits'
-mouse_degs1 = "/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/hits_lists.xlsx" # interesting genes (n=14 + 2) + TH and SLC18A2
-mouse_degs2 = "/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/240112_AllSNHits.xlsx" # 59 DEGs
+hits_chchd2 <- read_excel("/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/hits_lists.xlsx", sheet = "CHCHD2_hits")
 geomx_obj = "/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/geomx_110124_seurat.v5.Rdata" # geomx seurat object
 mouse_human_genes = read.csv("http://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt",sep="\t")
 
@@ -28,34 +25,12 @@ mouse_human_genes = read.csv("http://www.informatics.jax.org/downloads/reports/H
 ############################################################################################
 setwd(results_folder)
 
-# Read in hits from AAV-Gq treated mice
-# These are DEGs ID in both GqVeh (vehicle control) vs GqCNO (Gq receptor activation in neurons) and CNO only (activator control) vs GqCNO
+# Format hits
+#hits_chchd2$Gene <- toupper(hits_chchd2$Gene)
+#hits_chchd2$Gene[hits_chchd2$Gene == "TRP53INP1"] <- "TP53INP1"
+#hits_chchd2$Gene[hits_chchd2$Gene == "ZFP780B"] <- "ZNF780B"
+#hits_chchd2 <- hits_chchd2[hits_chchd2$Gene != "JPX",] # note; could not find Jpx as it is a lncRNA 
 
-## format gene list 1; interesting genes
-hits_aavgq <- as.data.frame(read_excel(mouse_degs1, sheet = "AAV-Gq_hits"))
-hits_aavgq$Gene <- row.names(hits_aavgq)
-hits_aavgq$Gene <- toupper(hits_aavgq$Gene)
-hits_aavgq$Gene[hits_aavgq$Gene == "DAT"] <- "SLC6A3"
-hits_aavgq$Gene[hits_aavgq$Gene == "HBA-A2"] <- "HBA2"
-hits_aavgq$Gene[hits_aavgq$Gene == "HBB-BT"] <- "HBA2"
-hits_aavgq <- hits_aavgq[!duplicated(hits_aavgq$Gene),]
-targets <- hits_aavgq[hits_aavgq$Region %in% c("VTA/SN","SN"),]
-
-targets1 <- targets
-targets1 <- rbind(targets,c("SN","down","SNCA"))
-###
-
-### 10 targets of interest 
-targets <- targets[targets$Gene %in% c("SYT1","SLC6A3","TH","SYNGR3","CALM2","S100A6","SLC18A2","SLC10A4","SGK1"), ]
-#targets <- rbind(targets,c("SN","down","SNCA"))
-targets_alt <- targets$Gene
-targets_alt[targets_alt == "SLC6A3"] <- "DAT"
-targets_alt[targets_alt == "SLC18A2"] <- "VMAT2"
-
-
-## format gene list 2; DEG 59
-hits_aavgq <- as.data.frame(read_excel(mouse_degs2, sheet = "Sheet1"))
-hits_aavgq$Gene <- row.names(hits_aavgq)
 # function to convert mouse to human
 convert_mouse_to_human <- function(gene_list){
   output = c()
@@ -68,31 +43,14 @@ convert_mouse_to_human <- function(gene_list){
       }
     }
   }
-
+  
   return (output)
 }
-musGenes <- hits_aavgq$Gene
-hits_aavgq$Gene <- convert_mouse_to_human(musGenes)
-targets <- hits_aavgq[hits_aavgq$Region %in% c("VTA/SN","SN"),]
-targets2 <- targets
+
+musGenes <- hits_chchd2$Gene
+hits_chchd2$Gene <- convert_mouse_to_human(musGenes)
+targets <- hits_chchd2[hits_chchd2$Region %in% c("SN/VTA","SN"),]
 ###
-
-
-## only targets within dopamine and CA
-#dopamine <- c("SYNGR3","SLC10A4","SLC18A2","TH","SLC6A3")
-dopamine <- c("SLC10A4","SLC18A2")
-#ca_transmission <- c("TRPC6","SYT1","CALM2","S100A6","SGK1")
-ca_transmission <- c("SYT1","CALM2","SYNGR3")
-targets$Group[targets$Gene %in% dopamine] <- "DA"
-targets$Group[targets$Gene %in% ca_transmission] <- "Ca2+/Trans"
-table(dopamine %in% targets$Gene)
-table(ca_transmission %in% targets$Gene)
-targets <- targets[!is.na(targets$Group),]
-
-# get all genes for providing normalised data
-targets3 <- rbind(targets1,targets2)
-targets3 <- targets3[!duplicated(targets3$Gene),]
-
 
 ############################################################################################
 #### Part 2: Evaluation directional change of mouse DEGs in human SNpc ventral tier; Nanostring GeoMx
@@ -100,21 +58,23 @@ targets3 <- targets3[!duplicated(targets3$Gene),]
 # load GeoMx Seurat object and extract expression values and metadata
 load(geomx_obj)
 
+## evaluate all data
+rdata <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
+load(rdata)
+
 # select counts and meta
 counts <- as.matrix(gxdat_s@assays$RNA$data)
 cell_meta <- as.data.frame(gxdat_s@meta.data)
+
+# select subset
+index <- which(cell_meta$ROI == "SNV" & cell_meta$Diagnosis %in% c("CTR","ePD") & cell_meta$segment == "Full ROI" )
+counts <- counts[,index]
+cell_meta <- cell_meta[index,]
+#cell_meta$Diagnosis[cell_meta$Diagnosis != "CTR"] <- "PD"
+
 colnames(cell_meta) <- make.names(colnames(cell_meta))
 DEG <- targets$Gene[targets$Gene %in% row.names(counts)]
 counts <- counts[DEG,]
-
-# # or get genes of interest norm data
-# counts <- as.matrix(gxdat_s@assays$RNA$data)
-# DEG <- targets3$Gene[targets3$Gene %in% row.names(counts)]
-# counts <- counts[DEG,]
-# colnames(counts) == row.names(cell_meta)
-# tmp <- cbind(cell_meta,t(counts))
-# write.xlsx(tmp, file="human_SN.THpos_CTR.ePD_GeoMx_genesinterest_260224.xlsx")
-
 
 # subset DEGs overlapping with counts
 targets <- targets[targets$Gene %in% DEG,]
@@ -128,7 +88,8 @@ cell_meta$plate <- unlist(lapply(strsplit(cell_meta$SampleID,"-"),function(x) x[
 
 ## Run Voom
 options(na.action='na.omit')
-design <- model.matrix(~ Diagnosis +  Age + PMD.hs + DV200 + Sex + plate + Brainbank_ID_recode,
+design <- model.matrix(~ Diagnosis +  Age + PMD.hs + DV200 + Sex + plate + Brainbank_ID,
+                         #Brainbank_ID_recode,
                        data=cell_meta,
                        drop = FALSE)
 
@@ -151,46 +112,6 @@ options(digits=3)
 # Select significant DEGs and assign to list
 lm_res <- topTable(vfit2,coef = "A", number = Inf,sort.by="P")
 
-# # volcano plot highlighting specific genes
-# keyvals <- ifelse(
-#   row.names(lm_res) %in% dopamine, 'purple',
-#   ifelse(row.names(lm_res) %in% ca_transmission, 'royalblue',
-#          'grey'))
-# keyvals[is.na(keyvals)] <- 'black'
-# names(keyvals)[keyvals == 'purple'] <- 'dopamine'
-# names(keyvals)[keyvals == 'royalblue'] <- 'Ca2+ & transmission'
-# 
-# g1 <- EnhancedVolcano(lm_res,
-#                       lab = rownames(lm_res),
-#                       x = 'logFC',
-#                       y = 'P.Value',
-#                       selectLab = c(dopamine,ca_transmission),
-#                       xlab = bquote(~Log[2]~ 'fold change'),
-#                       pCutoff = NA,
-#                       FCcutoff = NA,
-#                       pointSize = 5,
-#                       labSize = 4.5,
-#                       # shape = c(6, 4, 2, 11),
-#                       colCustom = keyvals,
-#                       colAlpha = 1,
-#                       legendPosition = 'left',
-#                       legendLabSize = 15,
-#                       legendIconSize = 5.0,
-#                       drawConnectors = TRUE,
-#                       widthConnectors = 1.0,
-#                       colConnectors = 'black',
-#                       arrowheads = FALSE,
-#                       gridlines.major = TRUE,
-#                       gridlines.minor = FALSE,
-#                       border = 'partial',
-#                       borderWidth = 1.5,
-#                       borderColour = 'black') + ylim(0,1.5)
-# 
-# # save
-# pdf(paste0("volcano_genes_interest_n10.pdf"))
-# g1
-# dev.off()
-
 ## Plotting 
 set.seed(123)
 
@@ -199,7 +120,6 @@ targets$Direction_geomx <- plyr::mapvalues(targets$Gene, from = row.names(lm_res
 targets$Direction_geomx[targets$Direction_geomx < 0] <- "down"
 targets$Direction_geomx[targets$Direction_geomx != "down"] <- "up"
 targets$P.Value <- as.numeric(plyr::mapvalues(targets$Gene, from = row.names(lm_res), to = lm_res$adj.P.Val))
-
 
 # Chi-square test
 original <- targets$Direction
@@ -226,17 +146,13 @@ lgd_pvalue = Legend(title = "p-value", col_fun = pvalue_col_fun, at = c(0, 1, 2,
 lgd_sig = Legend(pch = "*", type = "points", labels = "< 0.05")
 
 # row annots
-# row_ha = rowAnnotation(col = list(mouse=c("down" = "blue", "up" = "red"),
-#                                   human=c("down" = "blue", "up" = "red")),
-#                        mouse = targets$Direction,
-#                        human = targets$Direction_geomx,
-#                        pvalue = anno_simple(-log10(pvalue), col = pvalue_col_fun, pch = pch),
-#                        show_legend = FALSE)
-
-row_ha = rowAnnotation(col = list(mouse=c("down" = "blue", "up" = "red")),
+row_ha = rowAnnotation(col = list(mouse=c("down" = "red", "up" = "green"),
+                                  human=c("down" = "red", "up" = "green")),
                        mouse = targets$Direction,
-                       show_legend = FALSE, 
-                       simple_anno_size = unit(1, "cm"))
+                       human = targets$Direction_geomx,
+                       pvalue = anno_simple(-log10(pvalue), col = pvalue_col_fun, pch = pch),
+                       show_legend = FALSE)
+
 # column annots
 Subject_vec = viridis(length(unique(cell_meta$Brainbank_ID_recode)))
 names(Subject_vec) <- unique(cell_meta$Brainbank_ID_recode)
@@ -246,24 +162,19 @@ dv200_fun = colorRamp2(range(cell_meta$DV200), c("white", "darkblue"))
 pmd_fun = colorRamp2(range(cell_meta$PMD.hs), c("white", "darkgreen"))
 
 
-# col_ha = HeatmapAnnotation(
-#   Dx = cell_meta$Diagnosis,
-#   Subject = cell_meta$Brainbank_ID_recode,
-#   Sex = cell_meta$Sex,
-#   Age = cell_meta$Age,
-#   DV200 = cell_meta$DV200,
-#   PMD = cell_meta$PMD.hs,
-#   col = list(Dx = c("ePD" = "hotpink1","CTR" = "black"),
-#              Subject = Subject_vec,
-#              Sex = c("M" = "lightblue","F" = "purple"),
-#              Age = age_fun,
-#              DV200 = dv200_fun,
-#              PMD = pmd_fun )
-# )
-
 col_ha = HeatmapAnnotation(
   Dx = cell_meta$Diagnosis,
-  col = list(Dx = c("ePD" = "hotpink1","CTR" = "black"))
+  Subject = cell_meta$Brainbank_ID_recode,
+  Sex = cell_meta$Sex,
+  Age = cell_meta$Age,
+  DV200 = cell_meta$DV200,
+  PMD = cell_meta$PMD.hs,
+  col = list(Dx = c("ePD" = "hotpink1","CTR" = "black"),
+             Subject = Subject_vec,
+             Sex = c("M" = "lightblue","F" = "purple"),
+             Age = age_fun,
+             DV200 = dv200_fun,
+             PMD = pmd_fun )
 )
 
 # plot heatmap
@@ -272,29 +183,21 @@ ht <- Heatmap(log10(counts), name = "Log10(Counts)",
               top_annotation = col_ha, 
               show_column_names = FALSE,
               cluster_columns = TRUE,
-              row_names_gp = gpar(fontsize = 6),
-              row_split = targets$Group,
-              cluster_row_slices = FALSE,
-              row_title_gp = gpar(col = c("Dopamine" = "purple","Ca2+ & Transmission" = "orange"), cex = 0.7),
-              width = ncol(counts)*unit(1, "mm"), 
-              height = nrow(counts)*unit(5, "mm"))
+              row_names_gp = gpar(fontsize = 6))
 
 # assign plot data
-name_plot = "hits_aavgq_genes.interest"
-#name_plot = "hits_aavgq.SN.TH_n59"
+#name_plot = "hits_chchd2.SN.TH_n8"
+#name_plot = "hits_chchd2.SN.Full_n8"
+#name_plot = "hits_chchd2.VTA.TH_n7"
+#name_plot = "hits_chchd2.VTA.Full_n7"
+#name_plot = "hits_chchd2.SN.TH_ILBD.ePD.lPD_n8"
+name_plot = "hits_chchd2.SN.ILBD.Full_n8"
 
 # plot
 pdf(paste0("heatmap_",name_plot,".pdf"))
 draw(ht, annotation_legend_list = list(lgd_pvalue, lgd_sig))
 dev.off()
 
-png(paste0("heatmap_",name_plot,".png"))
-draw(ht, annotation_legend_list = list(lgd_pvalue, lgd_sig))
-dev.off()
-
-tiff(paste0("heatmap_",name_plot,".tiff"))
-draw(ht, annotation_legend_list = list(lgd_pvalue, lgd_sig))
-dev.off()
 
 ############################################################################################
 #### Part 3: tabulation of cohort statistics

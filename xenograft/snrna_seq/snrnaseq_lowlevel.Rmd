@@ -665,7 +665,7 @@ markers <- FindMarkers(
 # view results
 head(markers)
 
-# format for plottind and writing
+# format for plotting and writing
 markers_write <- markers
 row.names(markers_write) <- gsub("GRCh38--","",row.names(markers_write))
 
@@ -681,20 +681,24 @@ EnhancedVolcano(toptable = markers_write, x = "avg_log2FC",y = "p_val_adj",
 dev.off()
 
 #Set a gene list of interest
-my_genes <- c("GRCh38--SLC6A3","GRCh38--TH","GRCh38--KCNJ6")
-
+my_genes <- c("GRCh38--SLC6A3","GRCh38--TH","GRCh38--KCNJ6","GRCh38--EN1","GRCh38--SLC18A2")
 # Select the RNA counts slot to be the default assay
 DefaultAssay(merge.combined.sct) <- "RNA"
-
 #Violin plot of markers of interest
-p1 <- VlnPlot(merge.combined.sct, features=my_genes)
-arrange <- ggarrange(plotlist=list(p1), nrow=2, ncol=2, widths = c(2,2))
-ggsave("topgenes_deg_cl0.1.png", arrange)
+p1 <- VlnPlot(merge.combined.sct, features=my_genes, ncol = 5,pt.size = 1.5) 
+arrange <- ggarrange(plotlist=list(p1), nrow=2, ncol=1, widths = c(2,2))
+ggsave("topgenes_deg_cl0.1_v2.pdf", arrange)
 
 # cross check KEGG axond guidance
 kegg_axon_guidance <- read.delim(file="/Users/zacc/USyd/ASAP/snrna_seq/analysis/KEGG_AXON_GUIDANCE.v2023.2.Hs.grp",head=T,sep="\t")
 
 row.names(markers_write)[row.names(markers_write) %in% kegg_axon_guidance[,1]]
+
+
+
+
+
+
 
 ```
 

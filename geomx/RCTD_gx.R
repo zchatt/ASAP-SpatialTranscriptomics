@@ -31,10 +31,8 @@ contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contra
 setwd(analysis_dir)
 
 # single-cell data 
-
-## ## ## ## ## ## ## 
 ## Kamath dataset ## 
-## ## ## ## ## ## ## 
+
 # cell_ranger_data = "/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger" # single-cell cell ranger output
 # filenames <- list.files("/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger", pattern="*UMAP.tsv", full.names=TRUE) # read in metadata / umap of cell IDs
 # cell_id <- do.call(rbind, lapply(filenames,fread))
@@ -49,11 +47,9 @@ setwd(analysis_dir)
 # cell_types <- as.factor(cell_types)
 # nUMI <- colSums(sc_obj)
 
-## ## ## ## ## ## ## 
-## merged dataset ## 
-## ## ## ## ## ## ## 
-load("/Users/zacc/USyd/spatial_transcriptomics/data/public_datasets/merged_kam.sil.web_seurat.Rdata")
 
+## merged dataset ## 
+load("/Users/zacc/USyd/spatial_transcriptomics/data/public_datasets/merged_kam.sil.web_seurat.Rdata")
 
 # NOTE; taking excitatory, inhibitory and non-neurons from Kamath, NE and 5-HT from Webber, DA neuron populations from Siletti re-code
 toMatch <- c("Ex_","Inh_","Astro_","Endo_","Ependyma_","Macro_","MG_","Olig_","OPC_","5HT","NE",
@@ -126,9 +122,10 @@ colnames(coords) <- c("imagerow","imagecol")
 nUMI <- colSums(counts) # In this case, total counts per spot
 
 
-# ii) deconvolute TH+ ROIs SN using Siletti
-# construct ST to deconvolute for SN tissue
-group2 <- meta$ROI %in% c("SND","SNL","SNM","SNV")
+# ii) deconvolute ROIs using Siletti
+# construct ST to deconvolute
+#group2 <- meta$ROI %in% c("SND","SNL","SNM","SNV")
+group2 <- meta$ROI
 puck <- SpatialRNA(coords[group2,], counts[,group2], nUMI[group2])
 barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
 plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
@@ -156,6 +153,8 @@ reference <- Reference(counts_sc, cell_types, nUMIsc)
 ##  run RCTD
 myRCTD <- create.RCTD(puck, reference, max_cores = 8)
 myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
+
+#
 
 # iii) compare to ground truth
 roi_interest <- unique(meta_select$ROI)

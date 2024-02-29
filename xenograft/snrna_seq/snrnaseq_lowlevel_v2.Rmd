@@ -1,0 +1,1139 @@
+---
+title: 'cellranger and kallisto snRNA-seq integration and normalization'
+output:
+html_document:
+theme: united
+pdf_document: default
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+---
+  
+  ```{r setup, include=FALSE}
+all_times <- list()  # store the time for each chunk
+knitr::knit_hooks$set(time_it = local({
+  now <- NULL
+  function(before, options) {
+    if (before) {
+      now <<- Sys.time()
+    } else {
+      res <- difftime(Sys.time(), now, units = "secs")
+      all_times[[options$label]] <<- res
+    }
+  }
+}))
+knitr::opts_chunk$set(
+  tidy = TRUE,
+  tidy.opts = list(width.cutoff = 95),
+  fig.width = 10,
+  message = FALSE,
+  warning = FALSE,
+  time_it = TRUE
+)
+```
+
+```{r data, message=FALSE}
+library(Seurat)
+options(Seurat.object.assay.version = "v5")
+library(patchwork)
+library(Matrix)
+library(tidyverse)
+library(plyr)
+library(ggpubr)
+library(HGNChelper)
+library(EnhancedVolcano)
+theme_set(theme_bw())
+options(future.globals.maxSize = 1e9)
+options(Seurat.object.assay.version = "v5")
+
+```
+
+```{r define.paths, message=FALSE, warning=FALSE}
+# working directory
+working_dir="/Users/zacc/USyd/ASAP/snrna_seq/analysis"
+setwd(working_dir)
+
+# path of cellranger output
+cellranger_out="/Users/zacc/USyd/ASAP/snrna_seq/cellranger_out"
+```
+
+
+```{r cellranger.data, results='hide', message=FALSE, fig.keep='none'}
+# Read in multiple cellranger outputs
+
+# get list of datasets
+matrix_dir = "outs/filtered_feature_bc_matrix"
+cr_dirs <- list.dirs(cellranger_out)
+cr_dirs <- as.list(cr_dirs[grep(matrix_dir,cr_dirs)])
+
+# get 12w and 6w 
+cr_dirs <- cr_dirs[c(1,4)]
+
+# read in experiments
+cr_dfs <- lapply(cr_dirs, function(x) Read10X(unlist(x)))
+names(cr_dfs) <- gsub("/","",gsub(matrix_dir,"",gsub(cellranger_out,"",cr_dirs)))
+
+# create seurat objects - note I couldn't work out how to unlist & subset on a list of s4 objects in lapply, hence loop.
+cr_so <- list()
+for (i in 1:length(cr_dfs)) {
+  cr_so[[i]] <- CreateSeuratObject(counts = unlist(cr_dfs[i])[[1]], project = names(cr_dfs[i]))
+}
+
+# remove genes with no counts
+cr_so <- lapply(X = cr_so, FUN = function(x) {
+  x = x[,unname(which(colSums(GetAssayData(x))!=0))]
+})
+
+```
+
+
+```{r combine.lists, results='hide', message=FALSE, fig.keep='none'}
+# Performing integration on datasets normalized with SCTransform
+# combine seurat lists
+seurat_list <- c(cr_so)
+# get/ set names
+seurat_names <- gsub(".*2_","",c(names(cr_dfs)))
+# get/ set names
+seurat_names_2 <- gsub("hm","Mouse",gsub("hr","Rat",gsub(".*2_","",c(names(cr_dfs)))))
+```
+
+```{r qc.sample.filter, results='hide', message=FALSE, fig.keep='none'}
+# Percentage of reads that map to the mitochondrial genome
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    x <- AddMetaData(object = x, metadata = PercentageFeatureSet(x, pattern = "-MT-|-Mt-|-mt-"), col.name = "percent.mt")
+
+})
+
+# Visualize the distribution of mitochondrial gene expression detected per cell
+plot.list <- list()
+for (i in 1:2) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(color=orig.ident, x=percent.mt, fill=orig.ident)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + xlab("mtRNA (%)") + xlim(0,0.15) +
+    theme_classic()  + theme(legend.position = "none") +
+    geom_vline(xintercept = 0.1, lty =2)
+  
+}
+arrange <- ggarrange(plotlist=plot.list, nrow=3, ncol=4)
+ggsave("cellranger_mtprc_dist.png", arrange)
+
+
+# Visualize the distribution of nFeature_RNA per cell
+plot.list <- list()
+for (i in 1:2) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(color=orig.ident, x=nFeature_RNA, fill=orig.ident)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + 
+    theme_classic()  + theme(legend.position = "none") +
+    geom_vline(xintercept = 2000, lty =2)
+  
+}
+arrange <- ggarrange(plotlist=plot.list, nrow=3, ncol=4)
+ggsave("cellranger_nFeature_dist.png", arrange)
+
+
+#Filter cells that have unique filter counts < 2000 & >0.1% mitochondrial counts
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    x <- subset(x, subset = nFeature_RNA >= 2000 & percent.mt < 0.1)
+
+})
+
+# mean mtRNA percentage and nCount after filtering
+lapply(seurat_list,function(x) mean(x$nFeature_RNA))
+lapply(seurat_list,function(x) sd(x$nFeature_RNA))
+lapply(seurat_list,function(x) mean(x$percent.mt))
+```
+
+
+```{r qc.gene.filter, results='hide', message=FALSE, fig.keep='none'}
+# Visualize the number UMIs/transcripts per cell 
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=nCount_RNA)) + 
+    geom_density(alpha = 0.2) + 
+    scale_x_log10() + 
+    theme_classic() +
+    ylab("Cell density") +
+    geom_vline(xintercept = 500)
+}
+ggarrange(plotlist=plot.list, nrow=2, ncol=4, labels = seurat_names)
+
+plot.list <- list()
+for (i in 1:length(seurat_list[1:2])) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=nFeature_RNA)) + 
+    geom_density(alpha = 0.2) + 
+    theme_classic() +
+    scale_x_log10() + 
+    geom_vline(xintercept = 300)
+}
+ggarrange(plotlist=plot.list, nrow=1, ncol=4, labels = seurat_names_2)
+
+
+```
+
+```{r normalise, results='hide', message=FALSE, fig.keep='none'}
+seurat_list <- lapply(X = seurat_list, FUN = SCTransform) 
+
+```
+
+```{r bin.human.rodent, results='hide', message=FALSE, fig.keep='none'}
+# proportions of counts mapping to human and rodent genes.
+# Note: we cant integrate until the human cells are defined as the gene names of the single human:rat chimera are not present in others.
+quant_human_rodent <- function(res_mat) {
+  rodent_inds <- !grepl("GRCh38",row.names(res_mat[["SCT"]]$counts))
+  human_inds <- grepl("GRCh38",row.names(res_mat[["SCT"]]$counts))
+  cell_species <- tibble(n_rodent_umi = Matrix::colSums(res_mat[["SCT"]]$counts[rodent_inds,]),
+                         n_human_umi = Matrix::colSums(res_mat[["SCT"]]$counts[human_inds,]),
+                         tot_umi = Matrix::colSums(res_mat[["SCT"]]$counts),
+                         prop_rodent = n_rodent_umi / tot_umi,
+                         prop_human = n_human_umi / tot_umi)
+  
+}
+
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+  x <- AddMetaData(
+    object = x,
+    metadata = quant_human_rodent(x)
+  )
+})
+
+
+# plot of human proportions distribution
+plot.list <- list()
+for (i in 1:length(seurat_list)) {
+  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+    ggplot(aes(x=prop_human)) + 
+    geom_density(alpha = 0.2) + scale_y_break(c(100,800)) +
+    theme_classic() +
+    xlab("Human Proportion") + xlim(-0.05,1.05) +
+    geom_vline(xintercept = 0.9, lty =2) 
+}
+
+arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2))
+ggsave("humanprop_dist.png", arrange)
+
+# bin into human or rodent using 0.9 human prop threshold
+seurat_list <- lapply(X = seurat_list, FUN = function(x) {
+    origin <- x@meta.data$prop_human> 0.9
+    origin[origin == "TRUE"] <- "human"
+    origin[origin == "FALSE"] <- "rodent"
+   x <- AddMetaData(object = x,metadata = origin, col.name = 'origin')
+})
+
+lapply(seurat_list,function(x) table(x@meta.data$origin))
+
+# Filter cells to human - only taking cellranger samples currently until alignment of "kallisto_1y_hm" & "kallisto_6w_hr" corrected.
+seurat_list_human <- lapply(X = seurat_list[1:2], FUN = function(x) {
+    x <- subset(x, subset = origin == "human")
+})
+
+# Filter genes to human
+seurat_list_human <- lapply(X = seurat_list_human, FUN = function(x) {
+    x <- x[grep("GRCh38",row.names(x)),]
+})
+
+```
+
+```{r sct.init, results='hide', message=FALSE, fig.keep='none'}
+# Performing integration on datasets normalized with SCTransform
+# get variable features
+seurat_list <- lapply(X = seurat_list, function(x) FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)) 
+
+# select features that are repeatedly variable across datasets for integration 
+# Note cellranger_1y_hm & cellranger_6w_hr did not have enough cells to integrate, hence these were first merged with
+seurat_list_human_sub <- seurat_list_human
+features <- SelectIntegrationFeatures(object.list = seurat_list_human_sub, nfeatures = 2000)
+seurat_list_human_sub <- PrepSCTIntegration(object.list = seurat_list_human_sub, anchor.features = features)
+```
+
+```{r sct.anchors, message=FALSE, fig.keep='none'}
+merge.anchors <- FindIntegrationAnchors(object.list = seurat_list_human_sub, normalization.method = 'SCT', anchor.features = features)
+merge.combined.sct <- IntegrateData(anchorset = merge.anchors, normalization.method = 'SCT', k.weight = 32)
+
+```
+
+```{r sct.clustering, results='hide', message=FALSE}
+
+# Run the standard workflow for visualization and clustering
+merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
+merge.combined.sct <- RunPCA(merge.combined.sct, npcs = 30, verbose = FALSE)
+merge.combined.sct <- RunUMAP(merge.combined.sct, reduction = "pca", dims = 1:30)
+merge.combined.sct <- FindNeighbors(merge.combined.sct, reduction = "pca", dims = 1:30)
+merge.combined.sct <- FindClusters(merge.combined.sct, resolution = 0.5)
+
+# Visualization
+p1 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = "orig.ident")
+p2 <- DimPlot(merge.combined.sct, reduction = "umap", split.by = "orig.ident")
+p3 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = 'seurat_clusters')
+p1
+p2
+p3
+
+arrange <- ggarrange(plotlist=list(p3,p2), nrow=2, ncol=2, widths = c(2,2))
+ggsave("umap_humancells.png", arrange)
+
+
+# plot metrics
+metrics <-  c("nFeature_RNA", "nCount_RNA", "percent.mt")
+
+p4 <- FeaturePlot(merge.combined.sct, 
+            reduction = "umap", 
+            features = metrics,
+            pt.size = 0.4)
+
+ggsave("umap_seqmetrics.png", p4)
+
+# Extract identity and sample information from seurat object to determine the number of cells per cluster per sample
+n_cells <- FetchData(merge.combined.sct, 
+                     vars = c("ident", "orig.ident")) %>%
+        dplyr::count(ident, orig.ident) %>%
+        tidyr::spread(ident, n)
+n_cells
+
+# save seurat object
+saveRDS(merge.combined.sct, file = "xeno_human_snrnaseq_seurat_031123.rds")
+```
+
+```{r plot.marker.genes, results='hide', message=FALSE}
+
+#Set a gene list of interest
+my_genes <- c( "GRCh38--NCAM1", "GRCh38--MAP2", "GRCh38--TH", "GRCh38--KCNJ6", "GRCh38--LMX1A", "GRCh38--PITX3", "GRCh38--DCC", "GRCh38--NTN1", "GRCh38--CDC42",  "GRCh38--UNC5A", "GRCh38--DSCAM", "GRCh38--NEO1", "GRCh38--GFRA1", "GRCh38--RET", "GRCh38--RAC1", "GRCh38--RYK", "GRCh38--FZD3", "GRCh38--CXCR4", "GRCh38--PLXNA4", "GRCh38--ARRB1")
+
+# Select the RNA counts slot to be the default assay
+DefaultAssay(merge.combined.sct) <- "RNA"
+
+#Violin plot of markers of interest
+VlnPlot(merge.combined.sct, features=my_genes)
+
+```
+
+
+```{r cell.annotation.CHETAH, results='hide', message=FALSE}
+library(CHETAH)
+
+## Make SingleCellExperiments
+load("/Volumes/PRJ-2022ASAPs/Bioinformics/public_datasets/seurat_objects/kamath_seurat_subcells.Rdata")
+kamath.sce <- as.SingleCellExperiment(seurat_obj_subcells)
+colData(kamath.sce)$celltypes <- colData(kamath.sce)$Cell_Type
+
+merge.combined.sct <- readRDS("xeno_human_snrnaseq_seurat_031123.rds")
+input_counts <- merge.combined.sct@assays$SCT$counts
+row.names(input_counts) <- gsub("GRCh38--","",row.names(input_counts))
+
+input <- SingleCellExperiment(assays = list(counts = input_counts),
+                              reducedDims = SimpleList(UMAP = merge.combined.sct[["umap"]]@cell.embeddings))
+
+## Run CHETAH
+input <- CHETAHclassifier(input = input, ref_cells = kamath.sce)
+
+## Plot the classification
+
+p1 <- PlotCHETAH(input, pt.size = 4,return =TRUE)
+ggsave("chetah_cellclass.png", p1,width = 25, height = 10)
+
+p2 <- PlotCHETAH(input = input, interm = TRUE, pt.size = 4,return =TRUE)
+ggsave("chetah_cellclass_interm.png", p2,width = 25, height = 10)
+
+## Extract celltypes:
+celltypes <- input$celltype_CHETAH
+
+meta_dat <- merge.combined.sct@meta.data
+names(celltypes) == row.names(meta_dat)
+meta_dat$celltypes <- celltypes
+
+table(meta_dat$seurat_clusters,meta_dat$celltypes)
+
+```
+
+
+```{r cell.annotation, results='hide', message=FALSE}
+merge.combined.sct <- readRDS("xeno_human_snrnaseq_seurat_031123.rds")
+
+# set assy to RNA for cell annotation
+DefaultAssay(merge.combined.sct) <- "RNA"
+merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
+
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Brain"
+# e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
+
+
+# # prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+prefix <- "GRCh38--"
+for (i in 1:length(gs_list$gs_positive)){
+  if (length(gs_list$gs_positive[[i]]) > 0){
+  gs_list$gs_positive[[i]] <- paste0(prefix,unlist(gs_list$gs_positive[[i]]))
+  #gs_list$gs_positive[[i]][gs_list$gs_positive[[i]] %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
+  }
+}
+
+ for (i in 1:length(gs_list$gs_negative)){
+   if (length(gs_list$gs_negative[[i]]) > 0){
+   gs_list$gs_negative[[i]] <- paste0(prefix,unlist(gs_list$gs_negative[[i]]))
+   }
+ }
+
+tmp <- unlist(gs_list)[!unlist(gs_list) %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
+
+
+# ## Test FOUNDIN-PD markers
+# gs_list = list
+# 
+# iter1 <- list(item1 = 1, item2 = "a")
+# iter2 <- list(item1 = 1, item2 = "b")
+# All <- list(iter1 = iter1, iter2 = iter2)
+# 
+
+
+# get cell-type by cell matrix
+# es.max = sctype_score(scRNAseqData = merge.combined.sct[["RNA"]]@scale.data, scaled = TRUE,
+#                        gs = gs_list$gs_positive)
+# NOTE:  the sctype_score function is only working when run outside function command??? I dont know why??
+# Hence running outside function command
+scRNAseqData = merge.combined.sct[["RNA"]]@scale.data
+scaled = TRUE
+gs = gs_list$gs_positive
+gs2 = NULL
+gene_names_to_uppercase = 0
+
+   # check input matrix
+    if(!is.matrix(scRNAseqData)){
+        warning("scRNAseqData doesn't seem to be a matrix")
+    } else {
+        if(sum(dim(scRNAseqData))==0){
+            warning("The dimension of input scRNAseqData matrix equals to 0, is it an empty matrix?")
+        }
+    }
+    
+    # marker sensitivity
+    marker_stat = sort(table(unlist(gs)), decreasing = T); 
+    marker_sensitivity = data.frame(score_marker_sensitivity = scales::rescale(as.numeric(marker_stat), to = c(0,1), from = c(length(gs),1)),
+                                    gene_ = names(marker_stat), stringsAsFactors = !1)
+
+    # convert gene names to Uppercase
+    if(gene_names_to_uppercase){
+        rownames(scRNAseqData) = toupper(rownames(scRNAseqData));
+    }
+    
+    # subselect genes only found in data
+    names_gs_cp = names(gs); names_gs_2_cp = names(gs2);
+    gs = lapply(1:length(gs), function(d_){ 
+        GeneIndToKeep = rownames(scRNAseqData) %in% as.character(gs[[d_]]); rownames(scRNAseqData)[GeneIndToKeep]})
+    gs2 = lapply(1:length(gs2), function(d_){ 
+        GeneIndToKeep = rownames(scRNAseqData) %in% as.character(gs2[[d_]]); rownames(scRNAseqData)[GeneIndToKeep]})
+    names(gs) = names_gs_cp; names(gs2) = names_gs_2_cp;
+    cell_markers_genes_score = marker_sensitivity[marker_sensitivity$gene_ %in% unique(unlist(gs)),]
+
+    # z-scale if not
+    if(!scaled) Z <- t(scale(t(scRNAseqData))) else Z <- scRNAseqData
+    
+    # multiple by marker sensitivity
+    for(jj in 1:nrow(cell_markers_genes_score)){
+        Z[cell_markers_genes_score[jj,"gene_"], ] = Z[cell_markers_genes_score[jj,"gene_"], ] * cell_markers_genes_score[jj, "score_marker_sensitivity"]
+    }
+    
+    # subselect only with marker genes
+    Z = Z[unique(c(unlist(gs),unlist(gs2))), ]
+    
+    # combine scores
+    es = do.call("rbind", lapply(names(gs), function(gss_){ 
+        sapply(1:ncol(Z), function(j) {
+            gs_z = Z[gs[[gss_]], j]; gz_2 = Z[gs2[[gss_]], j] * -1
+            sum_t1 = (sum(gs_z) / sqrt(length(gs_z))); sum_t2 = sum(gz_2) / sqrt(length(gz_2));
+            if(is.na(sum_t2)){
+                sum_t2 = 0;
+            }
+            sum_t1 + sum_t2
+        })
+    })) 
+    
+    dimnames(es) = list(names(gs), colnames(Z))
+    es.max <- es[!apply(is.na(es) | es == "", 1, all),] # remove na rows
+
+
+
+# merge by cluster
+cL_resutls = do.call("rbind", lapply(unique(merge.combined.sct@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(merge.combined.sct@meta.data[merge.combined.sct@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(merge.combined.sct@meta.data$seurat_clusters==cl)), 10)
+}))
+
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# define thresholds
+thresholds <- sctype_scores$ncells/4
+
+# plot 
+dplot <- cL_resutls[cL_resutls$cluster == 0,]
+p1 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
+  geom_bar(stat = "identity") + xlab("Cell type") +
+    theme_classic() +
+    geom_hline(yintercept = thresholds[1], lty =2) + 
+  theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 0")
+
+dplot <- cL_resutls[cL_resutls$cluster == 1,]
+p2 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
+  geom_bar(stat = "identity") + xlab("Cell type") +
+    theme_classic() +
+    geom_hline(yintercept = thresholds[2], lty =2) + 
+  theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 1")
+
+arrange <- ggarrange(plotlist=list(p1,p2), nrow=2, ncol=2, widths = c(2,2))
+ggsave("sctype_cl0.1.png", arrange)
+
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < thresholds] = "Unknown"
+print(sctype_scores[,1:3])
+
+
+
+```
+
+```{r DEG.results = 'hide', message=FALSE}
+DefaultAssay(merge.combined.sct) <- "SCT"
+
+# Find differentially expressed features between cluster 0 (unknown human) and cluster 1 (dopaminergic neurons)
+merge.combined.sct <- PrepSCTFindMarkers(merge.combined.sct)
+markers <- FindMarkers(
+  object = merge.combined.sct,
+  ident.1 = "0",
+  ident.2 = "1",
+  assay = "SCT",
+  recorrect_umi = FALSE
+)
+
+# view results
+head(markers)
+
+# format for plottind and writing
+markers_write <- markers
+row.names(markers_write) <- gsub("GRCh38--","",row.names(markers_write))
+
+# write to file
+write.table(markers_write [markers_write $p_val_adj < 0.05,], file="DEG_young.xenograft_cl0(unk)-cl1(DaN).txt", quote = FALSE, sep="\t")
+
+# plot logFC vs p-value
+pdf("volcano_deg_cl0.1.pdf")
+EnhancedVolcano(toptable = markers_write, x = "avg_log2FC",y = "p_val_adj",
+                lab = rownames(markers_write),pCutoff = 0.05,
+                title = c("cluster 0 v 1"),FCcutoff = 1,
+                subtitle = "")
+dev.off()
+
+#Set a gene list of interest
+#my_genes <- c("GRCh38--SLC6A3","GRCh38--TH","GRCh38--KCNJ6","GRCh38--EN1","GRCh38--SLC18A2")
+my_genes <- c("GRCh38--NTN1","GRCh38--SEMA3A","GRCh38--WNT5A","GRCh38--TNIK","GRCh38--SLC6A3")
+# Select the RNA counts slot to be the default assay
+DefaultAssay(merge.combined.sct) <- "RNA"
+#Violin plot of markers of interest
+
+
+time1 <- merge.combined.sct$orig.ident
+time1[time1 == "run_HJ377DRX2_12w_hr" ] <- 12
+time1[time1 != 12 ] <- 6
+merge.combined.sct$time <- time1
+merge.combined.sct$time <- factor(merge.combined.sct$time, levels = c(6,12))
+p1 <- VlnPlot(merge.combined.sct, features=my_genes, ncol = 5,
+              pt.size = 1.5, split.by = 'time',
+              combine = FALSE) 
+
+arrange <- ggarrange(plotlist=p1, nrow=2, ncol=3, widths = c(2,2))
+#ggsave("topgenes_deg_cl0.1_v2.pdf", arrange)
+ggsave("topgenes_genes_interest.pdf", arrange)
+
+# cross check KEGG axond guidance
+kegg_axon_guidance <- read.delim(file="/Users/zacc/USyd/ASAP/snrna_seq/analysis/KEGG_AXON_GUIDANCE.v2023.2.Hs.grp",head=T,sep="\t")
+
+row.names(markers_write)[row.names(markers_write) %in% kegg_axon_guidance[,1]]
+
+```
+
+```{r top.features = 'hide', message=FALSE}
+
+# create variable features
+tmp1 <- subset(cr_so[[1]], features = grep("GRCh38--",row.names(cr_so[[1]])))
+tmp2 <- subset(cr_so[[2]], features = grep("GRCh38--",row.names(cr_so[[2]])))
+cr_so2 <- list(tmp1,tmp2)
+
+VariableFeatures(merge.combined.sct) <- SelectIntegrationFeatures(cr_so2)
+
+VariableFeatures(merge.combined.sct)
+merge.combined.sct[["RNA"]]@meta.features
+
+
+
+dat <- as.data.frame(merge.combined.sct@assays$SCT$counts)
+custid = merge.combined.sct@meta.data$seurat_clusters
+
+tmp1 <- apply(dat,1,function(x) median(x[custid == 1]))
+tmp0 <- apply(dat,1,function(x) median(x[custid == 0]))
+
+
+library(edgeR)
+
+# ontology
+# select databases
+dbs <- c("GO_Molecular_Function_2015", "GO_Cellular_Component_2015", "GO_Biological_Process_2015")
+
+# upreg cluster 1
+upreg <- tmp1[order(unlist(-tmp1))]
+upreg <- gsub("GRCh38--","",names(upreg)[upreg > 5])
+
+enriched <- enrichr(upreg, dbs)
+lapply(enriched, function(x) {
+  x <- x[x$Adjusted.P.value < 0.05,]
+  x[1:3,]
+})
+
+
+# upreg cluster 0
+upreg <- tmp0[order(unlist(-tmp0))]
+upreg <- gsub("GRCh38--","",names(upreg)[upreg > 5])
+
+enriched <- enrichr(upreg, dbs)
+lapply(enriched, function(x) {
+  x <- x[x$Adjusted.P.value < 0.05,]
+  x[1:3,]
+})
+
+```
+
+
+```{r DEG.voom = 'hide', message=FALSE}
+library(edgeR)
+
+# create list to collect results 
+res <- list()
+
+## 1) DEGs; Xenograft DA v non-DA
+# extract expression values and meta data
+exp_dat <- as.data.frame(merge.combined.sct@assays$RNA$counts)
+row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
+targ <- merge.combined.sct@meta.data
+
+# create design matrix
+options(na.action='na.omit')
+design <- model.matrix(reformulate("~ 0 + seurat_clusters"),
+                       #reformulate("~ cell_type_1"),
+                       data=targ, 
+                       drop = FALSE)
+# make names
+colnames(design) <- make.names(colnames(design))
+
+# create expression df & targ with design row.names
+targ <- targ[row.names(design),]
+y <- exp_dat[,row.names(targ)]
+
+# fit design
+v <- voom(y,design)
+vfit <- lmFit(v)
+
+# Perform LIMMA contrasts
+cont.matrix <- makeContrasts(A="seurat_clusters1 - seurat_clusters0",levels=design)
+fit2 <- contrasts.fit(vfit, cont.matrix)
+vfit2 <- eBayes(fit2)
+options(digits=3)
+
+# Select significant DEGs and assign to list
+tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
+dim(tmp[tmp$adj.P.Val < 0.05,])
+res[[1]] <- tmp
+
+tmp[c("NTN1","SEMA3A","WNT5A"),]
+which(row.names(tmp) %in% c("NTN1","SEMA3A","WNT5A"))
+
+# ## 2) DEGs; KCNJ6+/TH+ vs else human neurons
+# # extract expression values and meta data
+# exp_dat <- as.data.frame(merge.combined.sct@assays$RNA$counts)
+# row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
+# targ <- merge.combined.sct@meta.data
+# 
+# # extract KCNJ6 expression and assign KCNJ6+/TH+
+# targ$KCNJ6 <- unlist(exp_dat["KCNJ6",])
+# targ$TH <- unlist(exp_dat["TH",])
+# targ$KCNJ6.TH_pos <- targ$KCNJ6 > 0 & targ$TH > 0
+# # check if difference in umi counts
+# t.test(targ$n_human_umi[targ$KCNJ6.TH_pos == "TRUE"],
+# targ$n_human_umi[targ$KCNJ6.TH_pos == "FALSE"])
+# 
+# # create design matrix
+# options(na.action='na.omit')
+# design <- model.matrix(reformulate("~ 0 + KCNJ6.TH_pos  + n_human_umi"),
+#                        #reformulate("~ cell_type_1"),
+#                        data=targ, 
+#                        drop = FALSE)
+# # make names
+# colnames(design) <- make.names(colnames(design))
+# 
+# # create expression df & targ with design row.names
+# targ <- targ[row.names(design),]
+# y <- exp_dat[,row.names(targ)]
+# 
+# # fit design
+# v <- voom(y,design)
+# vfit <- lmFit(v)
+# 
+# # Perform LIMMA contrasts
+# cont.matrix <- makeContrasts(A="KCNJ6.TH_posFALSE - KCNJ6.TH_posTRUE",levels=design)
+# fit2 <- contrasts.fit(vfit, cont.matrix)
+# vfit2 <- eBayes(fit2)
+# options(digits=3)
+# 
+# # Select significant DEGs and assign to list
+# tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
+# dim(tmp[tmp$adj.P.Val < 0.05,])
+# res[[1]] <- tmp
+# 
+# tmp[c("NTN1","SEMA3A","WNT5A"),]
+
+
+
+## 3) DEGs; cluster 0 v 1 x time
+# extract expression values and meta data
+exp_dat <- as.data.frame(merge.combined.sct@assays$RNA$counts)
+row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
+targ <- merge.combined.sct@meta.data
+
+# exp_dat <- exp_dat[,targ$seurat_clusters == 1]
+# targ <- targ[targ$seurat_clusters == 1,]
+
+# define time in weeks
+targ$time <- targ$orig.ident
+targ$time[targ$time == "run_HJ377DRX2_12w_hr" ] <- 12
+targ$time[targ$time != 12 ] <- 6
+targ$time <- as.character(targ$time)
+
+# create design matrix
+options(na.action='na.omit')
+design <- model.matrix(reformulate("~ 0 + seurat_clusters * time "),
+                       #reformulate("~ cell_type_1"),
+                       data=targ, 
+                       drop = FALSE)
+# make names
+colnames(design) <- make.names(colnames(design))
+
+# create expression df & targ with design row.names
+targ <- targ[row.names(design),]
+y <- exp_dat[,row.names(targ)]
+
+# fit design
+v <- voom(y,design)
+vfit <- lmFit(v)
+
+# Perform LIMMA contrasts
+cont.matrix <- makeContrasts(A="(seurat_clusters0 - time6) -  (seurat_clusters1 - time6)",levels=design)
+fit2 <- contrasts.fit(vfit, cont.matrix)
+vfit2 <- eBayes(fit2)
+options(digits=3)
+
+# Select significant DEGs and assign to list
+tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
+dim(tmp[tmp$adj.P.Val < 0.05,])
+res[[2]] <- tmp
+
+
+
+## 4) Combined p-values of cluster 0-1 DEGs and clusters 6-12 transition DEGs
+# Function to combine p-values using Stouffer's Method
+combine_pvalues_stouffer <- function(p_values) {
+  # Convert p-values to Z-scores
+  z_scores <- qnorm(p_values / 2, lower.tail = FALSE)
+  
+  # Calculate combined Z-score
+  combined_z <- sum(z_scores) / sqrt(length(z_scores))
+  
+  # Convert combined Z-score back to a p-value
+  combined_p <- 2 * pnorm(-abs(combined_z))
+  
+  return(combined_p)
+}
+
+x <- as.data.frame(res[[1]])
+y <- as.data.frame(res[[2]])
+
+x$Gene <- row.names(x)
+y$Gene <- row.names(y)
+tmp1 <- merge(x,y, by="Gene")
+
+#tmp1 <- tmp1[tmp1$logFC.x > 0, ] # want to look at +logFC i.e. greater in cluster 1
+#tmp1 <- tmp1[tmp1$logFC.y < 0, ] # want to look at -logFC i.e. increased in cluster 1, 6 to 12 weeks but not cluster 0
+
+# calc stouffer
+for (z in 1:nrow(tmp1)){
+      tmp1$stouffer_p[z] <- combine_pvalues_stouffer(c(tmp1$adj.P.Val.x[z],tmp1$adj.P.Val.y[z]))
+  }
+
+tmp1 <- tmp1[order(tmp1$stouffer_p),]
+which(tmp1$Gene %in% "NTN1")
+merged_res <- tmp1
+
+# ## 2) DEGs; snRNAseq
+# # extract expression values and meta data
+# d2 <- as.data.frame(seurat_obj_subcells@assays$RNA$counts)
+# m2 <- seurat_obj_subcells@meta.data
+# exp_dat <- d2[,m2$Cell_Type %in% c("CALB1_CALCR","CALB1_CRYM_CCDC68",
+#                                    "CALB1_GEM","CALB1_PPP1R17","CALB1_RBP4",
+#                                    "CALB1_TRHR","SOX6_AGTR1","SOX6_DDT","SOX6_GFRA2","SOX6_PART1",
+#                               unique(m2$Cell_Type)[grep("Ex_|Inh_",unique(m2$Cell_Type))])]
+# targ <- m2[colnames(exp_dat),]
+# targ$cell_type_broad <- gsub("_.*","",targ$Cell_Type)
+# 
+# # create design matrix
+# options(na.action='na.omit')
+# design <- model.matrix(reformulate("~ 0 + cell_type_broad"),
+#                        data=targ, 
+#                        drop = FALSE)
+# # make names
+# colnames(design) <- make.names(colnames(design))
+# 
+# # create expression df & targ with design row.names
+# targ <- targ[row.names(design),]
+# y <- exp_dat[,row.names(targ)]
+# 
+# # fit design
+# v <- voom(y,design)
+# vfit <- lmFit(v)
+# 
+# # Perform LIMMA contrasts
+# cont.matrix <- makeContrasts(B="(cell_type_broadSOX6 + cell_type_broadCALB1) - (cell_type_broadEx + cell_type_broadInh)",
+#                              C="(cell_type_broadSOX6) - (cell_type_broadEx + cell_type_broadInh + cell_type_broadCALB1)",levels=design)
+# fit2 <- contrasts.fit(vfit, cont.matrix)
+# vfit2 <- eBayes(fit2)
+# options(digits=3)
+# 
+# # Select significant DEGs and assign to list
+# tmp <- topTable(vfit2,coef = "B",number = Inf,sort.by="P")
+# dim(tmp[tmp$adj.P.Val < 0.05,])
+# res[[2]] <- tmp
+# 
+# tmp <- topTable(vfit2,coef = "C",number = Inf,sort.by="P")
+# dim(tmp[tmp$adj.P.Val < 0.05,])
+# res[[3]] <- tmp
+
+# relabel 
+colnames(merged_res) <- gsub(".x",".DAdeg",colnames(merged_res))
+colnames(merged_res) <- gsub(".y",".DAdeg6.12",colnames(merged_res))
+
+# plot volcano
+dplot <- merged_res
+  lab_italics <- paste0("italic('", dplot$Gene, "')")
+  selectLab_italics = paste0(
+    "italic('",
+    c('NTN1','SLC6A3'),
+    "')")
+
+  keyvals.colour <- ifelse(
+    dplot$logFC.DAdeg > 1, 'red',
+      ifelse(dplot$logFC.DAdeg < 1, 'grey',
+        'grey1'))
+  keyvals.colour[is.na(keyvals.colour)] <- 'grey1'
+  names(keyvals.colour)[keyvals.colour == 'red'] <- 'candidate'
+  names(keyvals.colour)[keyvals.colour == 'grey'] <- ''
+
+p1 <- EnhancedVolcano(dplot,
+    lab = lab_italics,
+    x = 'logFC.DAdeg6.12',
+    y = 'stouffer_p',
+    selectLab = selectLab_italics,
+    xlab = bquote(~Log[2]~ 'fold change'),
+    colCustom = keyvals.colour,
+    pCutoff = 0.05,
+    FCcutoff = 1.0,
+    pointSize = 3.0,
+    labSize = 6.0,
+    labCol = 'black',
+    labFace = 'bold',
+    boxedLabels = TRUE,
+    parseLabels = TRUE,
+    col = c('black', 'pink', 'purple', 'red3'),
+    colAlpha = 4/5,
+    legendPosition = 'bottom',
+    legendLabSize = 14,
+    legendIconSize = 4.0,
+    drawConnectors = TRUE,
+    widthConnectors = 1.0,
+    colConnectors = 'black') + coord_flip()
+  
+  
+pdf("volcano_deg_stouffer.pdf")
+p1
+dev.off()
+
+
+## write results to file
+names(res) <- c("DEG_Xenograft_KCNJ6.TH_Else_UMI")
+#names(res) <- c("DEG_Xenograft_cluster0.cluster1","DEG_SNpc.scRNAseq_DaN.ExcInh","DEG_SNpc.scRNAseq_Sox6.Else") # Note DEG analysis for snRNAseq not working currently, need to review.
+#res <- lapply(res, function(x) x[x$adj.P.Val < 0.05,])
+res <- lapply(res, function(x) {
+  x$Gene <- row.names(x)
+  return(x)
+  })
+
+## Subset for chiara select
+req1 <- read.delim("/Users/zacc/USyd/ASAP/snrna_seq/analysis/chiara_request_100124.txt")
+tmp2 <- merge(tmp,req1, by.x = "row.names", by.y = "Gene")
+res2 <- list()
+res2[[1]] <- tmp2
+names(res2) <- c("DEG_Xenograft_cluster1.cluster0")
+
+# write to excel
+library(openxlsx)
+write.xlsx(res, file = "DEGs_LIMMA_Voom.xlsx", row.names = FALSE)
+write.xlsx(res, file = "DEGs_LIMMA_Voom_KCNJ6.TH.xlsx", row.names = FALSE)
+write.xlsx(res, file = "DEGs_LIMMA_Voom_KCNJ6.TH_UMI.xlsx", row.names = FALSE)
+write.xlsx(res2, file = "DEGs_LIMMA_Voom_request100124.xlsx", row.names = FALSE)
+
+
+```
+
+
+
+```{r DEG.ontologies = 'hide', message=FALSE}
+
+## 1. Run Gene Ontology
+library(enrichR)
+#tmp2 <- res[[2]]
+tmp2 <- merged_res[merged_res$logFC.x > 0 & merged_res$logFC.y < 0,][1:22,]
+
+# # remove mtRNA for any xenograft to snRNAseq contrasts
+# tmp2 <- tmp2[!row.names(tmp2) %in% row.names(tmp2)[grep("MT-",row.names(tmp2))],]
+# tmp2 <- tmp2[tmp2$adj.P.Val < 0.05,]
+
+# upreg list
+upreg <- row.names(tmp2)[tmp2$logFC < 0 & tmp2$adj.P.Val < 0.05 ]
+#upreg <- tmp2$Gene
+length(upreg)
+
+# # downreg list
+# downreg <- row.names(tmp2)[tmp2$logFC < 0]
+# length(downreg)
+
+# select databases
+dbs <- c("GO_Molecular_Function_2015", "GO_Cellular_Component_2015", "GO_Biological_Process_2015","Jensen_COMPARTMENTS")
+
+# upreg top 3 passing adj p-val < 0.05
+enriched <- enrichr(upreg, dbs)
+lapply(enriched, function(x) {
+  x <- x[x$Adjusted.P.value < 0.05,]
+  x[1:3,]
+})
+
+# plot enriched pathways
+p1 <- plotEnrich(enriched[["GO_Molecular_Function_2015"]], showTerms = 20, numChar = 40, y = "Count", orderBy = "Adjusted.P.value", title = "GO Molecular Function")
+p2 <- plotEnrich(enriched[["GO_Cellular_Component_2015"]], showTerms = 20, numChar = 40, y = "Count", orderBy = "Adjusted.P.value", title = "GO Cellular Component")
+p3 <- plotEnrich(enriched[["Jensen_COMPARTMENTS"]], showTerms = 20, numChar = 40, y = "Count", orderBy = "Adjusted.P.value", title = "Jensen COMPARTMENTS")
+
+arrange <- ggarrange(plotlist=list(p1,p2,p3), nrow=2, ncol=2, widths = c(2,2))
+# ggsave("GO_enrichment_upreg_DAneuron.png", arrange)
+
+ggsave("GO_Molecular_Function_2015_upreg_DAneuron6.12.png", p1)
+ggsave("GO_Cellular_Component_2015_upreg_DAneuron6.12.png", p2)
+ggsave("Jensen_COMPARTMENTS_upreg_DAneuron6.12.png", p3)
+
+# write to excel
+write.xlsx(enriched[["GO_Molecular_Function_2015"]], file = "DEG_GO_Molecular_Function_2015_upreg_DAneuron6.12.xlsx", row.names = FALSE)
+write.xlsx(enriched[["GO_Cellular_Component_2015"]], file = "DEG_GO_Cellular_Component_2015_upreg_DAneuron6.12.xlsx", row.names = FALSE)
+write.xlsx(enriched[["Jensen_COMPARTMENTS"]], file = "DEG_Jensen_COMPARTMENTS_upreg_DAneuron6.12.xlsx", row.names = FALSE)
+
+
+
+### Dot plots of genes of interest
+# rename clusters
+cluster_define <- as.numeric(as.character(merge.combined.sct@meta.data$seurat_clusters))
+cluster_define[cluster_define == 1] <- "Xenograft DA"
+cluster_define[cluster_define == 0] <- "Xenograft non-DA"
+merge.combined.sct@meta.data$cluster_define <- cluster_define
+
+cell_broad <- seurat_obj_subcells@meta.data$Cell_Type
+cell_broad <- gsub("_.*","",cell_broad)
+seurat_obj_subcells@meta.data$cell_broad <- cell_broad
+
+# genes of interest
+genes_to_plot <- unlist(strsplit(
+  enriched$Jensen_COMPARTMENTS$Genes[
+    which(enriched$Jensen_COMPARTMENTS$Term == "Synaptic membrane")],";"))
+
+#expression data
+exp_mat1 <- as.matrix(merge.combined.sct[["SCT"]]@counts)
+row.names(exp_mat1) <- gsub("GRCh38--","",row.names(exp_mat1))
+exp_mat1 <- exp_mat1[genes_to_plot,]
+
+exp_mat2 <- as.matrix(seurat_obj_subcells[["SCT"]]@counts[genes_to_plot,])
+
+# cell metadata
+meta1 <- merge.combined.sct@meta.data
+
+meta2 <- seurat_obj_subcells@meta.data
+meta2 <- meta2[meta2$cell_broad %in% c("SOX6","CALB1","Inh","Ex"),]
+
+# merge
+meta1 <- bind_cols(meta1, as.data.frame(t(exp_mat1)))
+
+exp_mat2 <- exp_mat2[,row.names(meta2)]
+meta2 <- bind_cols(meta2, as.data.frame(t(exp_mat2)))
+
+# select cols interest
+meta1 <- meta1[,c("cluster_define",genes_to_plot)]
+meta2 <- meta2[,c("cell_broad",genes_to_plot)]
+
+# long format
+meta1 <- pivot_longer(meta1, -cluster_define, names_to="Gene", values_to="Expression")
+meta2 <- pivot_longer(meta2, -cell_broad, names_to="Gene", values_to="Expression")
+
+# combine
+colnames(meta2) <- colnames(meta1)
+meta <- rbind(meta1,meta2)
+
+# create summary
+meta_summary <- meta %>%
+  dplyr::group_by(cluster_define, Gene) %>%
+  dplyr::summarise(Avg = mean(Expression),
+            Pct = sum(Expression > 0) / length(Expression) * 100)
+
+# order genes and cells
+df_xeno <- meta_summary$Pct[meta_summary$cluster_define == "Xenograft DA"] - 
+  meta_summary$Pct[meta_summary$cluster_define == "Xenograft non-DA"]
+genes_to_plot_order <- meta_summary$Gene[meta_summary$cluster_define == "Xenograft DA"][order(df_xeno)]
+meta_summary$Gene <- factor(meta_summary$Gene, levels=genes_to_plot_order)
+
+meta_summary$cluster_define <- factor(meta_summary$cluster_define, levels=c("Inh","Ex","CALB1","SOX6",
+                                                                            "Xenograft non-DA","Xenograft DA"))
+
+# get meta_summaries
+meta_summary$Avg <- log10(meta_summary$Avg)
+dp1 <- dot_plot <- ggplot(meta_summary, aes(x=Gene, y=cluster_define)) +
+  geom_point(aes(size = Pct, fill = Avg), color="black", shape=21) +
+  scale_size("% detected", range = c(0,6)) +
+  scale_fill_gradientn(colours = viridisLite::mako(100),
+                       guide = guide_colorbar(ticks.colour = "black",
+                                              frame.colour = "black"),
+                       name = "Log10(Average\nexpression)") +
+  ylab("") + xlab("") +
+  theme(axis.text.x = element_text(size=10, angle=45, hjust=1, color="black"),
+        axis.text.y = element_text(size=12, color="black"),
+        axis.title = element_text(size=14)) +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  theme(axis.text.x=element_text(angle = 45, hjust = 1))
+
+# save
+arrange <- ggarrange(plotlist=list(dp1), nrow=2, ncol=2)
+ggsave("dotplot_Synaptic.membrane.png", arrange)
+
+
+
+## 2.  identify terms of interest
+# terms interest
+terms_interest <- toupper(c("Semaphorin","Netrin","Ret","WNT","Frizzled","L1CAM","Slit","Robo","Axon"))
+tmp <- as.data.frame(enriched[["GO_Molecular_Function_2015"]])
+matches <- unique(grep(paste(terms_interest,collapse="|"), 
+                        toupper(tmp$Term)))
+
+tmp[matches, ]
+
+# axond guidance
+axon <- read.xlsx("/Users/zacc/USyd/ASAP/snrna_seq/analysis/Axonal_guidance_Genes_List.xlsx")
+tmp2 <- res[[1]]
+upreg_deg <- tmp2[tmp2$logFC > 0,]
+
+upreg_deg[row.names(upreg_deg) %in% axon$Name,]
+axon[axon$Name %in%row.names(upreg_deg),]
+
+genes_interest <- row.names(upreg_deg)[row.names(upreg_deg) %in% axon$Name]
+
+enriched
+
+
+
+
+# plot genes of interest
+source("/Users/zacc/github_repo/ASAP-SpatialTranscriptomics/convenience/plotting_functions.R")
+
+d1 <- merge.combined.sct@assays$SCT$counts
+row.names(d1) <- gsub("GRCh38--","",row.names(d1))
+m1 <- merge.combined.sct@meta.data
+
+d2 <- seurat_obj_subcells@assays$SCT$counts
+m2 <- seurat_obj_subcells@meta.data
+d2 <- d2[,m2$Cell_Type %in% c("CALB1_CALCR","CALB1_CRYM_CCDC68","CALB1_GEM","CALB1_PPP1R17",            "CALB1_RBP4","CALB1_TRHR","SOX6_AGTR1","SOX6_DDT","SOX6_GFRA2","SOX6_PART1",
+                              unique(m2$Cell_Type)[grep("Ex_|Inh_",unique(m2$Cell_Type))])]
+
+m2 <- m2[colnames(d2),]
+d1 <- as.data.frame(d1)
+d2 <- as.data.frame(d2)
+exp_dat <- merge(d1,d2,by="row.names")
+row.names(exp_dat) <- exp_dat$Row.names
+exp_dat <- exp_dat[,-1]
+
+targ$cell_type <- targ$cell_type_1
+targ$cell_type[targ$cell_type == 1] <- "Xenograft DA"
+targ$cell_type[targ$cell_type == 0] <- "Xenograft non-DA"
+
+gene_name <- "SEMA6D"
+targ$gene <- unlist(exp_dat[gene_name,row.names(targ)])
+cell_col <- viridis(length(unique(targ$cell_type_1)))
+
+v1 <- violin_plot_nosig_function(targ,"cell_type","gene","Cell-Type",paste0(gene_name, " Norm Counts"), cell_col ) +
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+gene_name <- "MAGI3"
+targ$gene <- unlist(exp_dat[gene_name,row.names(targ)])
+cell_col <- viridis(length(unique(targ$cell_type_1)))
+
+v2 <- violin_plot_nosig_function(targ,"cell_type","gene","Cell-Type",paste0(gene_name, " Norm Counts"), cell_col ) +
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+gene_name <- "ROBO2"
+targ$gene <- unlist(exp_dat[gene_name,row.names(targ)])
+cell_col <- viridis(length(unique(targ$cell_type_1)))
+
+v3 <- violin_plot_nosig_function(targ,"cell_type","gene","Cell-Type",paste0(gene_name, " Norm Counts"), cell_col ) +
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+arrange <- ggarrange(plotlist=list(v1,v2,v3), nrow=2, ncol=3, widths = c(2,2))
+ggsave("gene_exp_examples.png", arrange)
+
+# # downreg top 3 passing adj p-val < 0.05
+# enriched <- enrichr(downreg, dbs)
+# lapply(enriched, function(x) {
+#   x <- x[x$Adjusted.P.value < 0.05,]
+#   x[1:3,]
+# })
+
+# evaluate genes
+tmp <- res[[3]]
+tmp[c("SEMA6D","MAGI3","ROBO2"),]
+
+tmp <- enriched[["GO_Molecular_Function_2015"]]
+
+# evaluate axonal guidance members
+tmp <- res[[1]]
+axon <- read.xlsx("/Users/zacc/USyd/ASAP/snrna_seq/analysis/Axonal_guidance_Genes_List.xlsx")
+
+tmp[row.names(tmp) %in% axon$Name,]
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+```
