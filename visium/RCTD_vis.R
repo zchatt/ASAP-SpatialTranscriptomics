@@ -23,14 +23,24 @@ register(SerialParam())
 ############################################################################################
 #### Inputs
 ############################################################################################
+results_folder = "/sers/zacc/USyd/spatial_transcriptomics/analysis/visium/vis_130524"
+setwd(results_folder)
 
-analysis_dir <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis"
-rdata = "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/geomx_oct2023_seurat.Rdata"
-results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023/analysis/RCTD_results_run180124'
-contrast_path <- "/Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/contrasts_matrix.xlsx"
-setwd(analysis_dir)
+### ST datasets ###
 
-# single-cell data 
+# i) visium original (n=2)
+load("/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/SN_210823/SN_210823_merged.seurat.Rdata")
+st_obj <- subset(x = brain.merge, subset = tissue == "SN")
+
+
+# ii) visium 051324 - Sandy Controls
+working_dir = "/sers/zacc/USyd/spatial_transcriptomics/analysis/visium/vis_130524"
+seurat_obj <- LoadSeuratRds("/Volumes/research-data/PRJ-ASAPbioin/Bioinformics/datasets/seurat_objects/midbrain-controls-10x/controls_midbrain.harmony.rds")
+setwd(working_dir)
+
+
+
+#### single-cell data ###
 ## Kamath dataset ## 
 
 # cell_ranger_data = "/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger" # single-cell cell ranger output
@@ -56,6 +66,8 @@ toMatch <- c("Ex_","Inh_","Astro_","Endo_","Ependyma_","Macro_","MG_","Olig_","O
              names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"])))
 group1 <- grep(paste(toMatch,collapse="|"), merge.combined.sct@meta.data$cell_type_merge)
 sc_obj <- merge.combined.sct[,group1]
+# remove cell-types with majority of cells within the Periaqueductal gray matter - Abaurre reference
+sc_obj <- sc_obj[,!sc_obj@meta.data$cell_type_merge %in% c("CALB1_NPW_ONECUT1")]
 
 # # remove cell-types with <25 cells
 # cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
@@ -68,83 +80,46 @@ sc_obj <- merge.combined.sct[,group1]
 # cell_types <- as.factor(cell_types)
 # nUMIsc <- colSums(counts_sc)
 
-############################################################################################
-###### Part 1: Create ground-truths from snRNAseq datasets used for decon
-############################################################################################
-### create ground-truths from snRNAseq data
-siletti_DA_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"]) /
-  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"]))
-
-kamath_all <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"])
-toMatch <- c("Ex_","Inh_","Astro_","Endo_","Ependyma_","Macro_","MG_","Olig_","OPC_")
-group1 <- grep(paste(toMatch,collapse="|"), names(kamath_all))
-kamath_nonDA <- kamath_all[group1]
-kamath_nonDA_truth <- kamath_nonDA/ sum(kamath_nonDA)
-
-kamath_all_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"]) /
-  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"]))
-
-webber_LC_truth <- table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"]) /
-  sum(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"]))
-
-# stacked barplots of each
-dplot <- as.data.frame(siletti_DA_truth)
-colnames(dplot) <- c("Cell","Proportion")
-dplot$group <- "Siletti re Reference"
-
-g1 <- ggplot(dplot, aes(x = group, y = Proportion, fill= Cell)) + 
-  geom_bar(stat = "identity") + xlab("")
-
 
 ############################################################################################
-###### Part 2:  Format geomx spatial data
+###### Part 1:  Format spatial data
 ############################################################################################
-# setwd
-setwd(results_folder)
 
-# load geomx normalised data
-load(rdata)
-# select samples
-#keep_index <- gxdat_s$Diagnosis == "CTR"
-keep_index <- gxdat_s$Diagnosis != "NTC"
+
 # load in counts matrix
-#counts <- gxdat_s@assays$GeoMx@counts[,keep_index]  # load in counts matrix
-counts <- gxdat_s@assays$RNA@counts[,keep_index]  # load in counts matrix
-# create metadata matrix 
-meta <- gxdat_s@meta.data[keep_index,]
-# confirm names
-table(colnames(counts) == row.names(meta))
+counts <- st_obj@assays$SCT@counts
 # load in coordinates
-coords = as.data.frame(gxdat_s@reductions$umap@cell.embeddings[keep_index,]) # we are using UMAP coordinates as dummy variables until we obtain DSP ROI locations
-colnames(coords) <- c("imagerow","imagecol")
-# process counts
+offset = 500
+kth_image <- st_obj@images
+num_elements <- length(kth_image)
+coordinates_list <- vector("list", length = num_elements)
+for (i in seq_along(kth_image)) {
+  if ("coordinates" %in% slotNames(kth_image[[i]])) {
+    coordinates_list[[i]] <- kth_image[[i]]@coordinates
+    if (i > 1){
+      coordinates_list[[i]]["imagecol"] <-  coordinates_list[[i]]["imagecol"] + max(coordinates_list[[i-1]]["imagecol"]) + offset
+    }
+  }
+}
+combined_coordinates <- do.call(rbind, coordinates_list)
+coords = combined_coordinates[,c("imagecol","imagerow")]
+
+# inputs for RCTD
 nUMI <- colSums(counts) # In this case, total counts per spot
-
-############################################################################################
-###### Part 3: RCTD to obtain cell proportions
-############################################################################################
-
-### i) deconvolute ROIs using Siletti
-# construct ST to deconvolute
-group2 <- meta$ROI %in% c("SND","SNL","SNM","SNV","VTA","LC","RN")
-# group2 <- meta$ROI
-puck <- SpatialRNA(coords[group2,], counts[,group2], nUMI[group2])
+puck <- SpatialRNA(coords, counts, nUMI)
 barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names). 
-plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
+plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI') 
 
-# construct references
-# NOTE; taking DA neuron populations from Siletti re-code
-toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Siletti"])))
-group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
-sc_obj <- merge.combined.sct[ ,group1]
+
+############################################################################################
+###### Part 2:  Format reference (sc data)
+############################################################################################
 
 # remove cell-types with < 25 cells
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
 sc_obj <- sc_obj[,sc_obj@meta.data$cell_type_merge %in% cells_keep]
-# remove cell-types with majority of cells within the Periaqueductal gray matter
-sc_obj <- sc_obj[,!sc_obj@meta.data$cell_type_merge %in% c("CALB1_NPW_ONECUT1")]
 
-# get count data and restrict to only genes within GeoMx
+# get count data and restrict to only genes within ST
 counts_sc <- sc_obj[["RNA"]]$counts
 counts_sc <- counts_sc[row.names(counts_sc) %in% row.names(puck@counts),]
 
@@ -152,29 +127,19 @@ counts_sc <- counts_sc[row.names(counts_sc) %in% row.names(puck@counts),]
 cell_types <- setNames(sc_obj@meta.data$cell_type_merge, colnames(sc_obj))
 cell_types <- as.factor(cell_types)
 nUMIsc <- colSums(counts_sc)
+
+
 ## create reference
 reference <- Reference(counts_sc, cell_types, nUMIsc)
+
+
+############################################################################################
+###### Part 3: run RCTD to obtain cell proportions
+############################################################################################
 
 ##  run RCTD
 myRCTD <- create.RCTD(puck, reference, max_cores = 8)
 myRCTD <- run.RCTD(myRCTD, doublet_mode = 'full')
-
-# iii) compare to ground truth
-roi_interest <- unique(meta_select$ROI)
-res <- list()
-for (i in 1:length(roi_interest)){
-  # select CTR TH+
-  meta_select <- meta[group2,]
-  norm_weights <- normalize_weights(myRCTD@results$weights)
-  norm_weights_sub <- norm_weights[meta_select$Diagnosis == "CTR" & meta_select$segment == "TH" & meta_select$ROI %in% roi_interest[i],]
-  
-  # stacked barplots of each
-  m1 <- colMeans(norm_weights_sub)
-  dplot1 <- as.data.frame(cbind(Cell = names(m1),Proportion = m1))
-  dplot1$group <- paste0("CTR, TH+, ",roi_interest[i])
-  res[[i]] <- dplot1
-  
-}
 
 # combine with snRNAseq and plot
 dplot1 <- do.call("rbind", res)
@@ -208,9 +173,9 @@ plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck
 
 # construct references
 # NOTE; taking all cells from Kamath
-toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Kamath"])))
-group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
-sc_obj <- merge.combined.sct[ ,group1]
+toMatch <- c(names(table(sc_obj@meta.data$cell_type_merge[sc_obj@meta.data$dataset_merge == "Kamath"])))
+group1 <- sc_obj@meta.data$cell_type_merge %in% toMatch
+sc_obj <- sc_obj[ ,group1]
 
 # remove cell-types with < 25 cells AND/OR cells of interes
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
@@ -282,9 +247,9 @@ plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck
 
 # construct references
 # NOTE; taking all cells from Kamath
-toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge %in% c("Kamath","Siletti")])))
-group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
-sc_obj <- merge.combined.sct[ ,group1]
+toMatch <- c(names(table(sc_obj@meta.data$cell_type_merge[sc_obj@meta.data$dataset_merge %in% c("Kamath","Siletti")])))
+group1 <- sc_obj@meta.data$cell_type_merge %in% toMatch
+sc_obj <- sc_obj[ ,group1]
 
 # remove cell-types with < 25 cells AND/OR cells of interest
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
@@ -332,9 +297,9 @@ plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck
 
 # construct references
 # NOTE; taking all cells from Kamath
-toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge %in% c("Kamath","Siletti")])))
-group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
-sc_obj <- merge.combined.sct[ ,group1]
+toMatch <- c(names(table(sc_obj@meta.data$cell_type_merge[sc_obj@meta.data$dataset_merge %in% c("Kamath","Siletti")])))
+group1 <- sc_obj@meta.data$cell_type_merge %in% toMatch
+sc_obj <- sc_obj[ ,group1]
 
 # remove cell-types with < 25 cells AND/OR cells of interest
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])
@@ -382,9 +347,9 @@ barcodes <- colnames(puck@counts) # pucks to be used (a list of barcode names).
 plot_puck_continuous(puck, barcodes, puck@nUMI, ylimit = c(0,round(quantile(puck@nUMI,0.9))), title ='plot of nUMI')
 
 # construct references
-toMatch <- c(names(table(merge.combined.sct@meta.data$cell_type_merge[merge.combined.sct@meta.data$dataset_merge == "Webber"])))
-group1 <- merge.combined.sct@meta.data$cell_type_merge %in% toMatch
-sc_obj <- merge.combined.sct[ ,group1]
+toMatch <- c(names(table(sc_obj@meta.data$cell_type_merge[sc_obj@meta.data$dataset_merge == "Webber"])))
+group1 <- sc_obj@meta.data$cell_type_merge %in% toMatch
+sc_obj <- sc_obj[ ,group1]
 
 # remove cell-types with < 25 cells
 cells_keep <- names(table(sc_obj@meta.data$cell_type_merge)[table(sc_obj@meta.data$cell_type_merge) > 25])

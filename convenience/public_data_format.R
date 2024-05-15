@@ -104,7 +104,7 @@ sce_sub <- sce[!is.na(gene_name),]
 row.names(sce_sub) <- gene_name[!is.na(gene_name)]
 
 # iii) extract counts and metadata
-exp_dat <- data.frame(as.matrix(logcounts(sce_sub)))
+exp_dat <- data.frame(as.matrix(counts(sce_sub)))
 cell_meta <- as.data.frame(colData(sce_sub))
 
 # iii) create seurat object

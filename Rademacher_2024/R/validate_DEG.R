@@ -55,7 +55,7 @@ targets_alt[targets_alt == "SLC18A2"] <- "VMAT2"
 
 ## format gene list 2; DEG 59
 hits_aavgq <- as.data.frame(read_excel(mouse_degs2, sheet = "Sheet1"))
-hits_aavgq$Gene <- row.names(hits_aavgq)
+#hits_aavgq$Gene <- row.names(hits_aavgq)
 # function to convert mouse to human
 convert_mouse_to_human <- function(gene_list){
   output = c()

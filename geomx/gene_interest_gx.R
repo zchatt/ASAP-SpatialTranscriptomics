@@ -105,7 +105,7 @@ exp_dat <- as.matrix(gxdat_s@assays$RNA$data)
 meta_dat <- as.data.frame(gxdat_s@meta.data)
 
 # i) Violin plots between ROIs for CTR 
-gene_name <- "SNCA"
+gene_name <- "SNCB"
 gene <- unlist(exp_dat[gene_name,])
 dplot <- cbind(meta_dat,gene)
 dplot <- dplot[dplot$segment == "TH" &  dplot$Diagnosis == "CTR",]
@@ -185,7 +185,7 @@ for(i in 1:length(y_list)){
   
   # save plot
   arrange <- ggarrange(plotlist=list(bxp), nrow=2, ncol=2)
-  ggsave(paste("violin_SNCA.CTR.ROI_nothresh",y_variable,".png"), arrange)
+  ggsave(paste("violin_",gene_name,".CTR.ROI",y_variable,".png"), arrange)
   
 }
 

@@ -1,5 +1,5 @@
 ---
-title: 'cellranger and kallisto snRNA-seq integration and normalization'
+title: 'xenograft snRNA-seq integration and normalization'
 output:
 html_document:
 theme: united
@@ -87,7 +87,6 @@ cr_so <- lapply(X = cr_so, FUN = function(x) {
 
 
 ```{r combine.lists, results='hide', message=FALSE, fig.keep='none'}
-# Performing integration on datasets normalized with SCTransform
 # combine seurat lists
 seurat_list <- c(cr_so)
 # get/ set names
@@ -174,17 +173,53 @@ ggarrange(plotlist=plot.list, nrow=1, ncol=4, labels = seurat_names_2)
 
 ```
 
+```{r integrate, results='hide', message=FALSE, fig.keep='none'}
+# from Seurat 5.01 vignette Compiled: November 16, 2023
+# merge non-normalized data
+seurat_merge <- merge(seurat_list[[1]], y = seurat_list[[2]], add.cell.ids = c("12w", "6w"))
+
+# join layers after integration
+seurat_merge[["RNA"]] <- JoinLayers(seurat_merge[["RNA"]])
+
+# split the RNA measurements into layers x samples
+seurat_merge[["RNA"]] <- split(seurat_merge[["RNA"]], f = seurat_merge$orig.ident)
+
+# run standard anlaysis workflow without integration
+seurat_merge <- NormalizeData(seurat_merge)
+seurat_merge <- FindVariableFeatures(seurat_merge)
+seurat_merge <- ScaleData(seurat_merge)
+seurat_merge <- RunPCA(seurat_merge)
+seurat_merge <- FindNeighbors(seurat_merge, dims = 1:30, reduction = "pca")
+seurat_merge <- FindClusters(seurat_merge, resolution = 2, cluster.name = "unintegrated_clusters")
+seurat_merge <- RunUMAP(seurat_merge, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+# Visualization
+DimPlot(seurat_merge, reduction = "umap.unintegrated", group.by = c("orig.ident", "seurat_clusters"))
+
+
+# integrate datasets
+seurat_merge <- IntegrateLayers(object = seurat_merge, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",verbose = FALSE)
+
+# re-join layers after integration
+seurat_merge[["RNA"]] <- JoinLayers(seurat_merge[["RNA"]])
+
+# re-cluster
+seurat_merge <- FindNeighbors(seurat_merge, reduction = "integrated.cca", dims = 1:30)
+seurat_merge <- FindClusters(seurat_merge, resolution = 1)
+seurat_merge <- RunUMAP(seurat_merge, dims = 1:30, reduction = "integrated.cca")
+
+# Visualization
+DimPlot(seurat_merge, reduction = "umap", group.by = c("orig.ident", "seurat_clusters"))
+
+```
+
 ```{r normalise, results='hide', message=FALSE, fig.keep='none'}
-# store seurat_list for later subsetting
-seurat_list_stored <- seurat_list
-# STransform
-seurat_list <- lapply(X = seurat_list, FUN = SCTransform) 
+seurat_merge.sct <- SCTransform(seurat_merge)
 
 ```
 
 ```{r bin.human.rodent, results='hide', message=FALSE, fig.keep='none'}
-# proportions of counts mapping to human and rodent genes.
-# Note: we cant integrate until the human cells are defined as the gene names of the single human:rat chimera are not present in others.
+# function to calculate the proportions of counts mapping to human and rodent genes.
 quant_human_rodent <- function(res_mat) {
   rodent_inds <- !grepl("GRCh38",row.names(res_mat[["SCT"]]$counts))
   human_inds <- grepl("GRCh38",row.names(res_mat[["SCT"]]$counts))
@@ -196,20 +231,17 @@ quant_human_rodent <- function(res_mat) {
   
 }
 
-seurat_list <- lapply(X = seurat_list, FUN = function(x) {
-  x <- AddMetaData(
-    object = x,
-    metadata = quant_human_rodent(x)
-  )
-})
-
+# run and add to metadata
+seurat_merge.sct <- AddMetaData(seurat_merge.sct, metadata = quant_human_rodent(seurat_merge.sct))
 
 # plot of human proportions distribution
 plot.list <- list()
-for (i in 1:length(seurat_list)) {
-  plot.list[[i]] <- seurat_list[[i]]@meta.data %>% 
+orig_ident <- unique(seurat_merge.sct$orig.ident)
+for (i in 1:length(orig_ident)) {
+  plot.list[[i]] <- seurat_merge.sct@meta.data[seurat_merge.sct$orig.ident == orig_ident[i],] %>% 
     ggplot(aes(x=prop_human)) + 
-    geom_density(alpha = 0.2) + scale_y_break(c(100,800)) +
+    geom_density(alpha = 0.2) + 
+    #scale_y_break(c(100,800)) +
     theme_classic() +
     xlab("Human Proportion") + xlim(-0.05,1.05) +
     geom_vline(xintercept = 0.9, lty =2) 
@@ -219,117 +251,99 @@ arrange <- ggarrange(plotlist=plot.list, nrow=2, ncol=4, widths = c(2,2))
 ggsave("humanprop_dist.png", arrange)
 
 # bin into human or rodent using 0.9 human prop threshold
-seurat_list <- lapply(X = seurat_list, FUN = function(x) {
-    origin <- x@meta.data$prop_human > 0.9
-    origin[origin == "TRUE"] <- "human"
-    origin[origin == "FALSE"] <- "rodent"
-   x <- AddMetaData(object = x,metadata = origin, col.name = 'origin')
-})
-
-lapply(seurat_list,function(x) table(x@meta.data$origin))
-
-
-# merge into single dataset - function compiled  2023-11-10
-merge.combined.human <- merge(seurat_list_human[[1]], y = seurat_list_human[[2]], add.cell.ids = c("12w", "6w"), project = "xeno", merge.data = TRUE)
-
-
-merge.combined.human <- subset(merge.combined.human, subset = origin == "human")
-merge.combined.human <- subset(merge.combined.human, features = grep("GRCh38",row.names(merge.combined.human)))
-
-merge.combined.human <- merge.combined.human[grep("GRCh38",row.names(merge.combined.human)),]
-
-# Filter cells and genes in stored data to human - only taking cellranger samples currently until alignment of "kallisto_1y_hm" & "kallisto_6w_hr" corrected.
-# for (i in 1:length(seurat_list)){
-#  seurat_list_stored[[i]] <- AddMetaData(object = seurat_list_stored[[i]],metadata = seurat_list[[i]]$origin, col.name = 'origin')
-# }
-
-seurat_list_human <- lapply(X = seurat_list_stored[1:2], FUN = function(x) {
-    x <- subset(x, subset = origin == "human")
-})
-
-
-# # Filter genes to human
-# seurat_list_human <- lapply(X = seurat_list_human, FUN = function(x) {
-#     x <- x[grep("GRCh38",row.names(x)),]
-# })
-
-```
-
-```{r sct.init, results='hide', message=FALSE, fig.keep='none'}
-# STransform
-# seurat_list_human <- lapply(X = seurat_list_human, FUN = SCTransform) 
-
-# Performing integration on datasets normalized with SCTransform
-# get variable features
-seurat_list_human <- lapply(X = seurat_list_human, function(x) FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)) 
-
-# select features that are repeatedly variable across datasets for integration 
-# Note cellranger_1y_hm & cellranger_6w_hr did not have enough cells to integrate, hence these were first merged with
-seurat_list_human_sub <- seurat_list_human
-features <- SelectIntegrationFeatures(object.list = seurat_list_human_sub, nfeatures = 2000)
-seurat_list_human_sub <- PrepSCTIntegration(object.list = seurat_list_human_sub, anchor.features = features)
-```
-
-```{r sct.anchors, message=FALSE, fig.keep='none'}
-merge.anchors <- FindIntegrationAnchors(object.list = seurat_list_human_sub, normalization.method = 'SCT', anchor.features = features)
-merge.combined.sct <- IntegrateData(anchorset = merge.anchors, normalization.method = 'SCT', k.weight = 32)
-
-```
-
-```{r sct.clustering, results='hide', message=FALSE}
-
-merge.combined.sct <- merge.combined.sct[grep("GRCh38",row.names(merge.combined.sct)),]
-
-# Run the standard workflow for visualization and clustering
-merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
-merge.combined.sct <- RunPCA(merge.combined.sct, npcs = 30, verbose = FALSE)
-merge.combined.sct <- RunUMAP(merge.combined.sct, reduction = "pca", dims = 1:30)
-merge.combined.sct <- FindNeighbors(merge.combined.sct, reduction = "pca", dims = 1:30)
-merge.combined.sct <- FindClusters(merge.combined.sct, resolution = 0.5)
+seurat_merge.sct$origin <- seurat_merge.sct@meta.data$prop_human > 0.9
+seurat_merge.sct$origin[seurat_merge.sct$origin == "TRUE"] <- "human"
+seurat_merge.sct$origin[seurat_merge.sct@meta.data$prop_human < 0.01] <- "rodent"
+seurat_merge.sct$origin[seurat_merge.sct$origin == "FALSE"] <- "unknown"
 
 # Visualization
-p1 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = "orig.ident")
-p2 <- DimPlot(merge.combined.sct, reduction = "umap", split.by = "orig.ident")
-p3 <- DimPlot(merge.combined.sct, reduction = "umap", group.by = 'seurat_clusters')
-p1
-p2
-p3
+p1 <- DimPlot(seurat_merge.sct, reduction = "umap", group.by = c("orig.ident"))
+p2 <- DimPlot(seurat_merge.sct, reduction = "umap", group.by = c("seurat_clusters"))
+p3 <- DimPlot(seurat_merge.sct, reduction = "umap", group.by = c("origin"))
 
-arrange <- ggarrange(plotlist=list(p3,p2), nrow=2, ncol=2, widths = c(2,2))
-ggsave("umap_humancells.png", arrange)
+ggsave("snrnaseq_lowlvl_cluster_orig.ident.pdf",p1)
+ggsave("snrnaseq_lowlvl_cluster_seurat_clusters.pdf",p2)
+ggsave("snrnaseq_lowlvl_cluster_origin.pdf",p3)
+
+# calculate proportions of each sample with human nuclei
+table(seurat_merge.sct$origin,seurat_merge.sct$orig.ident)[1,]/
+table(seurat_merge.sct$orig.ident) * 100
+
+```
+
+```{r select.human, results='hide', message=FALSE}
+
+# get human genes
+genes.use <- row.names(seurat_merge.sct)[grep("GRCh38",row.names(seurat_merge.sct))]
+
+# get human cells
+ident.use <- row.names(seurat_merge.sct@meta.data)[seurat_merge.sct@meta.data$origin == "human"]
+
+# create new seurat object
+subset.matrix <- seurat_merge.sct@assays$RNA$data[genes.use, ident.use] # Pull the raw expression matrix from the original Seurat object containing only the genes of 
+# strip human identifiers
+row.names(subset.matrix) <- gsub("GRCh38--","",row.names(subset.matrix))
+
+# subset samples of interest
+seurat_human <- CreateSeuratObject(subset.matrix) # Create a new Seurat object with just the genes of interest
+orig.ident <- seurat_merge.sct@meta.data[ident.use,] # Pull the identities from the original Seurat object as a data.frame
+seurat_human <- AddMetaData(object = seurat_human, metadata = orig.ident) # Add the idents to the meta.data slot
+Idents(object = seurat_human) <- ident.use # Assign identities for the new Seurat object
+
+# split the RNA measurements into layers x samples
+seurat_human[["RNA"]] <- split(seurat_human[["RNA"]], f = seurat_human$orig.ident)
+
+# run standard anlaysis workflow without integration
+seurat_human <- NormalizeData(seurat_human)
+seurat_human <- FindVariableFeatures(seurat_human)
+seurat_human <- ScaleData(seurat_human)
+seurat_human <- RunPCA(seurat_human)
+seurat_human <- FindNeighbors(seurat_human, dims = 1:30, reduction = "pca")
+seurat_human <- FindClusters(seurat_human, resolution = 2, cluster.name = "unintegrated_clusters")
+seurat_human <- RunUMAP(seurat_human, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+
+# integrate datasets
+seurat_human <- IntegrateLayers(object = seurat_human, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",verbose = FALSE, k.weight = 50)
+
+# re-join layers after integration
+seurat_human[["RNA"]] <- JoinLayers(seurat_human[["RNA"]])
+
+# re-cluster
+seurat_human <- FindNeighbors(seurat_human, reduction = "integrated.cca", dims = 1:30)
+seurat_human <- FindClusters(seurat_human, resolution = 1)
+seurat_human <- RunUMAP(seurat_human, dims = 1:30, reduction = "integrated.cca")
+
+# Visualization
+p1 <- DimPlot(seurat_human, reduction = "umap", group.by = c("orig.ident", "seurat_clusters"))
+ggsave("snrnaseq_lowlvl_cluster_humancells.pdf",p1)
 
 
-# plot metrics
+# plot metrics for each cluster
 metrics <-  c("nFeature_RNA", "nCount_RNA", "percent.mt")
 
-p4 <- FeaturePlot(merge.combined.sct, 
+p4 <- FeaturePlot(seurat_human, 
             reduction = "umap", 
             features = metrics,
             pt.size = 0.4)
 
-ggsave("umap_seqmetrics.png", p4)
+ggsave("umap_seqmetrics_human.png", p4)
 
 # Extract identity and sample information from seurat object to determine the number of cells per cluster per sample
-n_cells <- FetchData(merge.combined.sct, 
+n_cells <- FetchData(seurat_human, 
                      vars = c("ident", "orig.ident")) %>%
         dplyr::count(ident, orig.ident) %>%
         tidyr::spread(ident, n)
 n_cells
 
+
+# format metadata
+seurat_human@meta.data$week <- seurat_human@meta.data$orig.ident
+seurat_human@meta.data$week[seurat_human@meta.data$orig.ident == "run_HJ377DRX2_12w_hr" ] <- 12
+seurat_human@meta.data$week[seurat_human@meta.data$orig.ident == "run_HLNGJDRX2_6w_hr" ] <- 6
+seurat_human$week <- factor(x = object@ident, levels = c(6,12))
+
 # save seurat object
-#saveRDS(merge.combined.sct, file = "xeno_human_snrnaseq_seurat_140324.rds")
-```
-
-```{r plot.marker.genes, results='hide', message=FALSE}
-
-#Set a gene list of interest
-my_genes <- c( "GRCh38--NCAM1", "GRCh38--MAP2", "GRCh38--TH", "GRCh38--KCNJ6", "GRCh38--LMX1A", "GRCh38--PITX3", "GRCh38--DCC", "GRCh38--NTN1", "GRCh38--CDC42",  "GRCh38--UNC5A", "GRCh38--DSCAM", "GRCh38--NEO1", "GRCh38--GFRA1", "GRCh38--RET", "GRCh38--RAC1", "GRCh38--RYK", "GRCh38--FZD3", "GRCh38--CXCR4", "GRCh38--PLXNA4", "GRCh38--ARRB1")
-
-# Select the RNA counts slot to be the default assay
-DefaultAssay(merge.combined.sct) <- "RNA"
-
-#Violin plot of markers of interest
-VlnPlot(merge.combined.sct, features=my_genes)
+#  saveRDS(seurat_human, file = "xeno_human_snrnaseq_seurat_070524.rds")
 
 ```
 
@@ -337,17 +351,16 @@ VlnPlot(merge.combined.sct, features=my_genes)
 ```{r cell.annotation.CHETAH, results='hide', message=FALSE}
 library(CHETAH)
 
-## Make SingleCellExperiments
-load("/Volumes/PRJ-2022ASAPs/Bioinformics/public_datasets/seurat_objects/kamath_seurat_subcells.Rdata")
+## Make SingleCellExperiments 
+load("/Volumes/research-data/PRJ-ASAPbioin/Bioinformics/datasets/seurat_objects/kamath_seurat_subcells.Rdata")
 kamath.sce <- as.SingleCellExperiment(seurat_obj_subcells)
 colData(kamath.sce)$celltypes <- colData(kamath.sce)$Cell_Type
 
-merge.combined.sct <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_031123.rds")
-input_counts <- merge.combined.sct@assays$SCT$counts
-row.names(input_counts) <- gsub("GRCh38--","",row.names(input_counts))
+seurat_human <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_070524.rds")
+input_counts <- seurat_human@assays$RNA$counts
 
 input <- SingleCellExperiment(assays = list(counts = input_counts),
-                              reducedDims = SimpleList(UMAP = merge.combined.sct[["umap"]]@cell.embeddings))
+                              reducedDims = SimpleList(UMAP = seurat_human[["umap"]]@cell.embeddings))
 
 ## Run CHETAH
 input <- CHETAHclassifier(input = input, ref_cells = kamath.sce)
@@ -363,7 +376,7 @@ ggsave("chetah_cellclass_interm.png", p2,width = 25, height = 10)
 ## Extract celltypes:
 celltypes <- input$celltype_CHETAH
 
-meta_dat <- merge.combined.sct@meta.data
+meta_dat <- seurat_human@meta.data
 names(celltypes) == row.names(meta_dat)
 meta_dat$celltypes <- celltypes
 
@@ -373,11 +386,11 @@ table(meta_dat$seurat_clusters,meta_dat$celltypes)
 
 
 ```{r cell.annotation, results='hide', message=FALSE}
-merge.combined.sct <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_140324.rds")
+seurat_human <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_070524.rds")
 
 # set assy to RNA for cell annotation
 DefaultAssay(merge.combined.sct) <- "RNA"
-merge.combined.sct <- ScaleData(merge.combined.sct, verbose = FALSE)
+seurat_human <- ScaleData(seurat_human, verbose = FALSE)
 
 
 # load gene set preparation function
@@ -390,33 +403,8 @@ db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScType
 tissue = "Brain"
 # e.g. Immune system,Pancreas,Liver,Eye,Kidney,Brain,Lung,Adrenal,Heart,Intestine,Muscle,Placenta,Spleen,Stomach,Thymus 
 
-
 # # prepare gene sets
 gs_list = gene_sets_prepare(db_, tissue)
-prefix <- "GRCh38--"
-for (i in 1:length(gs_list$gs_positive)){
-  if (length(gs_list$gs_positive[[i]]) > 0){
-  gs_list$gs_positive[[i]] <- paste0(prefix,unlist(gs_list$gs_positive[[i]]))
-  #gs_list$gs_positive[[i]][gs_list$gs_positive[[i]] %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
-  }
-}
-
- for (i in 1:length(gs_list$gs_negative)){
-   if (length(gs_list$gs_negative[[i]]) > 0){
-   gs_list$gs_negative[[i]] <- paste0(prefix,unlist(gs_list$gs_negative[[i]]))
-   }
- }
-
-tmp <- unlist(gs_list)[!unlist(gs_list) %in% row.names(merge.combined.sct[["RNA"]]@scale.data)]
-
-
-# ## Test FOUNDIN-PD markers
-# gs_list = list
-# 
-# iter1 <- list(item1 = 1, item2 = "a")
-# iter2 <- list(item1 = 1, item2 = "b")
-# All <- list(iter1 = iter1, iter2 = iter2)
-# 
 
 
 # get cell-type by cell matrix
@@ -424,7 +412,7 @@ tmp <- unlist(gs_list)[!unlist(gs_list) %in% row.names(merge.combined.sct[["RNA"
 #                        gs = gs_list$gs_positive)
 # NOTE:  the sctype_score function is only working when run outside function command??? I dont know why??
 # Hence running outside function command
-scRNAseqData = merge.combined.sct[["RNA"]]@scale.data
+scRNAseqData = seurat_human@assays$RNA$scale.data
 scaled = TRUE
 gs = gs_list$gs_positive
 gs2 = NULL
@@ -485,11 +473,10 @@ gene_names_to_uppercase = 0
     es.max <- es[!apply(is.na(es) | es == "", 1, all),] # remove na rows
 
 
-
 # merge by cluster
-cL_resutls = do.call("rbind", lapply(unique(merge.combined.sct@meta.data$seurat_clusters), function(cl){
-    es.max.cl = sort(rowSums(es.max[ ,rownames(merge.combined.sct@meta.data[merge.combined.sct@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
-    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(merge.combined.sct@meta.data$seurat_clusters==cl)), 10)
+cL_resutls = do.call("rbind", lapply(unique(seurat_human@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(seurat_human@meta.data[seurat_human@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(seurat_human@meta.data$seurat_clusters==cl)), 10)
 }))
 
 sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
@@ -512,8 +499,15 @@ p2 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
     geom_hline(yintercept = thresholds[2], lty =2) + 
   theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 1")
 
-arrange <- ggarrange(plotlist=list(p1,p2), nrow=2, ncol=2, widths = c(2,2))
-ggsave("sctype_cl0.1.png", arrange)
+dplot <- cL_resutls[cL_resutls$cluster == 2,]
+p3 <- ggplot(data = dplot, aes(x = reorder(type, scores), y = scores)) +
+  geom_bar(stat = "identity") + xlab("Cell type") +
+    theme_classic() +
+    geom_hline(yintercept = thresholds[2], lty =2) + 
+  theme(axis.text.x=element_text(angle = 45, hjust = 1)) + ggtitle("Cluster 2")
+
+arrange <- ggarrange(plotlist=list(p1,p2,p3), nrow=2, ncol=2, widths = c(2,2))
+ggsave("sctype_cl0.1.2.png", arrange)
 
 
 # set low-confident (low ScType score) clusters to "unknown"
@@ -521,260 +515,160 @@ sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < thresholds] 
 print(sctype_scores[,1:3])
 
 
-
 ```
 
-```{r DEG.results = 'hide', message=FALSE}
-# merge.combined.sct <- readRDS("xeno_human_snrnaseq_seurat_031123.rds")
-# DefaultAssay(merge.combined.sct) <- "SCT"
-# 
-# # Find differentially expressed features between cluster 0 (unknown human) and cluster 1 (dopaminergic neurons)
-# merge.combined.sct <- PrepSCTFindMarkers(merge.combined.sct)
-# markers <- FindMarkers(
-#   object = merge.combined.sct,
-#   ident.1 = "0",
-#   ident.2 = "1",
-#   assay = "SCT",
-#   recorrect_umi = FALSE
-# )
-# 
-# # view results
-# head(markers)
-# 
-# # format for plottind and writing
-# markers_write <- markers
-# row.names(markers_write) <- gsub("GRCh38--","",row.names(markers_write))
-# 
-# # write to file
-# write.table(markers_write [markers_write $p_val_adj < 0.05,], file="DEG_young.xenograft_cl0(unk)-cl1(DaN).txt", quote = FALSE, sep="\t")
-# 
-# # plot logFC vs p-value
-# pdf("volcano_deg_cl0.1.pdf")
-# EnhancedVolcano(toptable = markers_write, x = "avg_log2FC",y = "p_val_adj",
-#                 lab = rownames(markers_write),pCutoff = 0.05,
-#                 title = c("cluster 0 v 1"),FCcutoff = 1,
-#                 subtitle = "")
-# dev.off()
-# 
-# #Set a gene list of interest
-# #my_genes <- c("GRCh38--SLC6A3","GRCh38--TH","GRCh38--KCNJ6","GRCh38--EN1","GRCh38--SLC18A2")
-# my_genes <- c("GRCh38--NTN1","GRCh38--SEMA3A","GRCh38--WNT5A","GRCh38--TNIK","GRCh38--SLC6A3")
-# # Select the RNA counts slot to be the default assay
-# DefaultAssay(merge.combined.sct) <- "RNA"
-# #Violin plot of markers of interest
-# 
-# 
-# time1 <- merge.combined.sct$orig.ident
-# time1[time1 == "run_HJ377DRX2_12w_hr" ] <- 12
-# time1[time1 != 12 ] <- 6
-# merge.combined.sct$time <- time1
-# merge.combined.sct$time <- factor(merge.combined.sct$time, levels = c(6,12))
-# p1 <- VlnPlot(merge.combined.sct, features=my_genes, ncol = 5,
-#               pt.size = 1.5, split.by = 'time',
-#               combine = FALSE) 
-# 
-# arrange <- ggarrange(plotlist=p1, nrow=2, ncol=3, widths = c(2,2))
-# #ggsave("topgenes_deg_cl0.1_v2.pdf", arrange)
-# ggsave("topgenes_genes_interest.pdf", arrange)
-# 
-# # cross check KEGG axond guidance
-# kegg_axon_guidance <- read.delim(file="/Users/zacc/USyd/ASAP/snrna_seq/analysis/KEGG_AXON_GUIDANCE.v2023.2.Hs.grp",head=T,sep="\t")
-# 
-# row.names(markers_write)[row.names(markers_write) %in% kegg_axon_guidance[,1]]
-# 
-# ```
-# 
-# ```{r top.features = 'hide', message=FALSE}
-# 
-# # create variable features
-# tmp1 <- subset(cr_so[[1]], features = grep("GRCh38--",row.names(cr_so[[1]])))
-# tmp2 <- subset(cr_so[[2]], features = grep("GRCh38--",row.names(cr_so[[2]])))
-# cr_so2 <- list(tmp1,tmp2)
-# 
-# VariableFeatures(merge.combined.sct) <- SelectIntegrationFeatures(cr_so2)
-# 
-# VariableFeatures(merge.combined.sct)
-# merge.combined.sct[["RNA"]]@meta.features
-# 
-# 
-# 
-# dat <- as.data.frame(merge.combined.sct@assays$SCT$counts)
-# custid = merge.combined.sct@meta.data$seurat_clusters
-# 
-# tmp1 <- apply(dat,1,function(x) median(x[custid == 1]))
-# tmp0 <- apply(dat,1,function(x) median(x[custid == 0]))
-# 
-# 
-# library(edgeR)
-# 
-# # ontology
-# # select databases
-# dbs <- c("GO_Molecular_Function_2015", "GO_Cellular_Component_2015", "GO_Biological_Process_2015")
-# 
-# # upreg cluster 1
-# upreg <- tmp1[order(unlist(-tmp1))]
-# upreg <- gsub("GRCh38--","",names(upreg)[upreg > 5])
-# 
-# enriched <- enrichr(upreg, dbs)
-# lapply(enriched, function(x) {
-#   x <- x[x$Adjusted.P.value < 0.05,]
-#   x[1:3,]
-# })
-# 
-# 
-# # upreg cluster 0
-# upreg <- tmp0[order(unlist(-tmp0))]
-# upreg <- gsub("GRCh38--","",names(upreg)[upreg > 5])
-# 
-# enriched <- enrichr(upreg, dbs)
-# lapply(enriched, function(x) {
-#   x <- x[x$Adjusted.P.value < 0.05,]
-#   x[1:3,]
-# })
 
+```{r assign.cluster.cell = 'hide', message=FALSE}
+# Assign clusters name based on CHETAH and scType
+seurat_human@meta.data$cell_type <- as.character(seurat_human@meta.data$seurat_clusters)
+seurat_human@meta.data$cell_type[seurat_human@meta.data$cell_type != "2"] <- "non-DA"
+seurat_human@meta.data$cell_type[seurat_human@meta.data$cell_type == "2"] <- "DA"
+
+# save seurat object
+#  saveRDS(seurat_human, file = "xeno_human_snrnaseq_seurat_070524.rds")
 ```
 
 
 ```{r DEG.voom = 'hide', message=FALSE}
-merge.combined.sct <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_140324.rds")
-DefaultAssay(merge.combined.sct) <- "RNA"
+seurat_human <- readRDS("/Users/zacc/USyd/ASAP/snrna_seq/analysis/xeno_human_snrnaseq_seurat_140324.rds")
+DefaultAssay(seurat_human) <- "RNA"
 library(edgeR)
 
 # create list to collect results 
 res <- list()
 
+
 ## 1) DEGs; Xenograft DA v non-DA
 # extract expression values and meta data
-exp_dat <- as.data.frame(cbind(merge.combined.sct@assays$RNA$counts.run_HJ377DRX2_12w_hr,
-                               merge.combined.sct@assays$RNA$counts.run_HLNGJDRX2_6w_hr)) # note these are the raw count data for each
-row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
-targ <- merge.combined.sct@meta.data
+exp_dat <- as.data.frame(seurat_human@assays$RNA$data) # note these are the raw counts
+targ <- seurat_human@meta.data
 
-# create design matrix
-options(na.action='na.omit')
-design <- model.matrix(reformulate("~ 0 + seurat_clusters"),
-                       #reformulate("~ cell_type_1"),
-                       data=targ, 
-                       drop = FALSE)
-# make names
-colnames(design) <- make.names(colnames(design))
+# subset for var of interest
+dge <- DGEList(exp_dat, group = targ$cell_type)
+dge <- calcNormFactors(dge)
+design <- model.matrix( ~ cell_type, data=targ)
+vm <- voom(dge, design = design, plot = TRUE)
+fit <- lmFit(vm, design = design)
+fit <- eBayes(fit)
+tt <- topTable(fit, n = Inf, adjust.method = "BH")
 
-# create expression df & targ with design row.names
-targ <- targ[row.names(design),]
-y <- exp_dat[,row.names(targ)]
+tt$contrast <- "DA.nonDA"
+res[[1]] <- tt
 
-# fit design
-v <- voom(y,design)
-vfit <- lmFit(v)
+which(row.names(tt) %in% c("NTN1","SEMA3A","WNT5A"))
 
-# Perform LIMMA contrasts
-cont.matrix <- makeContrasts(A="seurat_clusters1 - seurat_clusters0",levels=design)
-fit2 <- contrasts.fit(vfit, cont.matrix)
-vfit2 <- eBayes(fit2)
-options(digits=3)
-
-# Select significant DEGs and assign to list
-tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
-dim(tmp[tmp$adj.P.Val < 0.05,])
-res[[1]] <- tmp
-
-tmp[c("NTN1","SEMA3A","WNT5A"),]
-which(row.names(tmp) %in% c("NTN1","SEMA3A","WNT5A"))
-
-# ## 2) DEGs; KCNJ6+/TH+ vs else human neurons
-# # extract expression values and meta data
-# exp_dat <- as.data.frame(merge.combined.sct@assays$RNA$counts)
-# row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
-# targ <- merge.combined.sct@meta.data
-# 
-# # extract KCNJ6 expression and assign KCNJ6+/TH+
-# targ$KCNJ6 <- unlist(exp_dat["KCNJ6",])
-# targ$TH <- unlist(exp_dat["TH",])
-# targ$KCNJ6.TH_pos <- targ$KCNJ6 > 0 & targ$TH > 0
-# # check if difference in umi counts
-# t.test(targ$n_human_umi[targ$KCNJ6.TH_pos == "TRUE"],
-# targ$n_human_umi[targ$KCNJ6.TH_pos == "FALSE"])
-# 
-# # create design matrix
-# options(na.action='na.omit')
-# design <- model.matrix(reformulate("~ 0 + KCNJ6.TH_pos  + n_human_umi"),
-#                        #reformulate("~ cell_type_1"),
-#                        data=targ, 
-#                        drop = FALSE)
-# # make names
-# colnames(design) <- make.names(colnames(design))
-# 
-# # create expression df & targ with design row.names
-# targ <- targ[row.names(design),]
-# y <- exp_dat[,row.names(targ)]
-# 
-# # fit design
-# v <- voom(y,design)
-# vfit <- lmFit(v)
-# 
-# # Perform LIMMA contrasts
-# cont.matrix <- makeContrasts(A="KCNJ6.TH_posFALSE - KCNJ6.TH_posTRUE",levels=design)
-# fit2 <- contrasts.fit(vfit, cont.matrix)
-# vfit2 <- eBayes(fit2)
-# options(digits=3)
-# 
-# # Select significant DEGs and assign to list
-# tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
-# dim(tmp[tmp$adj.P.Val < 0.05,])
-# res[[1]] <- tmp
-# 
-# tmp[c("NTN1","SEMA3A","WNT5A"),]
-
-
-
-## 3) DEGs; cluster 0 v 1 x time
+## 2) DEGs; Xenograft DA (KCNJ6+/TH+) v non-DA 
 # extract expression values and meta data
-exp_dat <- as.data.frame(cbind(merge.combined.sct@assays$RNA$counts.run_HJ377DRX2_12w_hr,
-                               merge.combined.sct@assays$RNA$counts.run_HLNGJDRX2_6w_hr)) # note these are the raw count data for each
-row.names(exp_dat) <- gsub("GRCh38--","",row.names(exp_dat))
-targ <- merge.combined.sct@meta.data
+exp_dat <- as.data.frame(seurat_human@assays$RNA$data) # note these are the raw counts
+targ <- seurat_human@meta.data
+targ$cell_type_exp <- c(targ$cell_type == "DA" & exp_dat["KCNJ6",] > 0 & exp_dat["TH",] > 0)
+targ$cell_type_exp[targ$cell_type_exp == "TRUE"] <- "DA.kcnj6.th"
+targ$cell_type_exp[targ$cell_type == "non-DA"] <- "non-DA"
 
-# exp_dat <- exp_dat[,targ$seurat_clusters == 1]
-# targ <- targ[targ$seurat_clusters == 1,]
+exp_dat <- exp_dat[,targ$cell_type_exp != "FALSE"]
+targ <- targ[targ$cell_type_exp != "FALSE",]
 
-# define time in weeks
-targ$time <- targ$orig.ident
-targ$time[targ$time == "run_HJ377DRX2_12w_hr" ] <- 12
-targ$time[targ$time != 12 ] <- 6
-targ$time <- as.character(targ$time)
+# subset for var of interest
+dge <- DGEList(exp_dat, group = targ$cell_type_exp)
+dge <- calcNormFactors(dge)
+design <- model.matrix( ~ cell_type_exp, data=targ)
+vm <- voom(dge, design = design, plot = TRUE)
+fit <- lmFit(vm, design = design)
+fit <- eBayes(fit)
+tt <- topTable(fit, n = Inf, adjust.method = "BH")
 
-# create design matrix
-options(na.action='na.omit')
-design <- model.matrix(reformulate("~ 0 + seurat_clusters * time "),
-                       #reformulate("~ cell_type_1"),
-                       data=targ, 
-                       drop = FALSE)
-# make names
+tt$contrast <- "DA_kcnj6_th.nonDA"
+res[[2]] <- tt
+
+which(row.names(tt) %in% c("NTN1","SEMA3A","WNT5A","DCC"))
+tt[c("NTN1","SEMA3A","WNT5A","DCC"),]
+
+
+## 3) DEGs; cluster x time
+# extract expression values and meta data
+exp_dat <- as.data.frame(seurat_human@assays$RNA$data) # note these are the raw counts
+targ <- seurat_human@meta.data
+
+# subset for var of interest
+dge <- DGEList(exp_dat, group = targ$cell_type)
+dge <- calcNormFactors(dge)
+design <- model.matrix( ~ 0 + cell_type * week, data=targ)
 colnames(design) <- make.names(colnames(design))
-
-# create expression df & targ with design row.names
-targ <- targ[row.names(design),]
-y <- exp_dat[,row.names(targ)]
-
-# fit design
-v <- voom(y,design)
-vfit <- lmFit(v)
-
-# Perform LIMMA contrasts
-cont.matrix <- makeContrasts(A="(seurat_clusters0 - time6) -  (seurat_clusters1 - time6)",levels=design)
-fit2 <- contrasts.fit(vfit, cont.matrix)
+vm <- voom(dge, design = design, plot = TRUE)
+fit <- lmFit(vm, design = design)
+cont.matrix <- makeContrasts(A="(cell_typeDA - week12) - (cell_typenon.DA - week12)",levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
 vfit2 <- eBayes(fit2)
-options(digits=3)
+tt <- topTable(vfit2, n = Inf, adjust.method = "BH")
 
-# Select significant DEGs and assign to list
-tmp <- topTable(vfit2,coef = "A",number = Inf,sort.by="P")
-dim(tmp[tmp$adj.P.Val < 0.05,])
-res[[2]] <- tmp
+tt$contrast <- "DA.nonDA_time"
+res[[3]] <- tt
 
-which(row.names(tmp) %in% c("NTN1","SEMA3A","WNT5A"))
+which(row.names(tt) %in% c("NTN1","SEMA3A","WNT5A","DCC"))
+tt[c("NTN1","SEMA3A","WNT5A","DCC"),]
 
 
-## 4) Combined p-values of cluster 0-1 DEGs and clusters 6-12 transition DEGs
+## 4) DEGs; cluster (KCNJ6+/TH+) x time
+# extract expression values and meta data
+exp_dat <- as.data.frame(seurat_human@assays$RNA$data) # note these are the raw counts
+targ <- seurat_human@meta.data
+targ$cell_type_exp <- c(targ$cell_type == "DA" & exp_dat["KCNJ6",] > 0 & exp_dat["TH",] > 0)
+targ$cell_type_exp[targ$cell_type_exp == "TRUE"] <- "DA.kcnj6.th"
+targ$cell_type_exp[targ$cell_type == "non-DA"] <- "non-DA"
+
+exp_dat <- exp_dat[,targ$cell_type_exp != "FALSE"]
+targ <- targ[targ$cell_type_exp != "FALSE",]
+
+# subset for var of interest
+dge <- DGEList(exp_dat, group = targ$cell_type_exp)
+dge <- calcNormFactors(dge)
+design <- model.matrix( ~ 0 + cell_type_exp * week, data=targ)
+colnames(design) <- make.names(colnames(design))
+vm <- voom(dge, design = design, plot = TRUE)
+fit <- lmFit(vm, design = design)
+cont.matrix <- makeContrasts(A="(cell_type_expDA.kcnj6.th - week12) - (cell_type_expnon.DA - week12)",levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+vfit2 <- eBayes(fit2)
+tt <- topTable(vfit2, n = Inf, adjust.method = "BH")
+
+tt$contrast <- "DA_kcnj6_th.nonDA_time"
+res[[4]] <- tt
+
+which(row.names(tt) %in% c("NTN1","SEMA3A","WNT5A","DCC"))
+tt[c("NTN1","SEMA3A","WNT5A","DCC"),]
+t1 <- tt[tt$logFC > 0,]
+which(row.names(t1) %in% c("NTN1","SEMA3A","WNT5A","DCC"))
+
+
+
+# write to excel
+library(openxlsx)
+tmp <- as.data.frame(res[[1]])
+tmp$Gene <- row.names(tmp)
+write.xlsx(tmp, file = "deg_voom_DA.nonDA.xlsx")
+
+tmp <- as.data.frame(res[[2]])
+tmp$Gene <- row.names(tmp)
+write.xlsx(tmp, file = "deg_voom_DA_kcnj6_th.nonDA.xlsx")
+
+tmp <- as.data.frame(res[[3]])
+tmp$Gene <- row.names(tmp)
+write.xlsx(tmp, file = "deg_voom_cluster.time.xlsx")
+
+tmp <- as.data.frame(res[[4]])
+tmp$Gene <- row.names(tmp)
+write.xlsx(tmp, file = "deg_voom_cluster_kcnj6_th.time.xlsx", row.names = TRUE)
+
+
+
+
+
+
+
+
+
+####
+## Combined p-values of cluster 0-1 DEGs and clusters 6-12 transition DEGs
 # Function to combine p-values using Stouffer's Method
 combine_pvalues_stouffer <- function(p_values) {
   # Convert p-values to Z-scores
@@ -926,6 +820,25 @@ write.xlsx(res2, file = "DEGs_LIMMA_Voom_request100124.xlsx", row.names = FALSE)
 
 
 ```
+
+
+
+```{r plot.marker.genes, results='hide', message=FALSE}
+# gene list of interest
+my_genes <- c( "KCNJ6", "TH","NTN1","DCC","SEMA3A","WNT5A")
+
+# Select the RNA counts slot to be the default assay
+DefaultAssay(seurat_human) <- "RNA"
+
+#Violin plot of markers of interest
+p1 <- VlnPlot(seurat_human, features=my_genes, group.by = 'cell_type', split.by = 'week')
+
+
+ggsave("vln_genes_interest.png", p1)
+
+```
+
+
 
 
 

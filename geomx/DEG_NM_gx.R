@@ -8,6 +8,7 @@ library(viridis)
 library(ggpubr)
 library(dplyr)
 library(plyr)
+library(enrichR)
 
 ############################################################################################
 #### Inputs
@@ -90,6 +91,7 @@ meta_dat$iNM_quantile <- factor(meta_dat$iNM_quantile, levels = c("3rd_Q","1st_Q
 
 # 2) calculate group-wise % of toxic, nontoxic etc iNM granules
 data_table <- df_agg_iNM[!df_agg_iNM$iNM_cluster %in% "young CTR",]
+data_table <- data_table[data_table$Diagnosis %in% c("CTR","ILBD"),] # toggle
 colnames(data_table) <- make.names(colnames(data_table))
 dplot <- data_table %>% dplyr::count(intra.extra,Diagnosis,Brainbank_ID, ROI, Brainregion,Age,Sex,PMD,iNM_cluster,ROI.Area..µm.., sort = TRUE)
 dplot <- dplot[!is.na(dplot$intra.extra),]
@@ -230,7 +232,7 @@ cont_dat <- cont_dat[cont_dat$notes == "run",]
 ## Run Voom
 res <- list() # list to collect results
 sample_names_list <- list()
-for (val in 146:nrow(cont_dat)){
+for (val in 147:nrow(cont_dat)){
   # print model number
   print(cont_dat$model.number[val])
   
@@ -323,8 +325,47 @@ res <- lapply(res,function(x){
 # diag <- res[which(cont_dat$concept_bin == "Neuromelanin")]
 # write.xlsx(diag, file = "Neuromelanin_LIMMA_Voom.xlsx", row.names = FALSE)
 
-diag <- res[146:length(res)]
-write.xlsx(diag, file = "Neuromelanin_classified_LIMMA_Voom_v2.xlsx", row.names = FALSE)
+diag <- res[147:length(res)]
+write.xlsx(diag, file = "Neuromelanin_classified_LIMMA_Voom_CTR.ILBD_v3.xlsx", row.names = FALSE)
+
+
+# volcano plot highlighting specific genes
+require(lattice)
+res_plot <- list
+for (val in 147:length(res)){
+  lm_res <- as.data.frame(res[val])
+  g1 <- EnhancedVolcano(lm_res,
+                        lab = rownames(lm_res),
+                        x = colnames(lm_res[1]),
+                        y = colnames(lm_res[5]),
+                        xlab = bquote(~Log[2]~ 'fold change'),
+                        selectLab = c("HPGDS","ADRB1","TOMM5"),
+                        pCutoff = 0.05,
+                        FCcutoff = 1,
+                        pointSize = 3,
+                        labSize = 3,
+                        colAlpha = 1,
+                        legendPosition = 'bottom',
+                        legendLabSize = 15,
+                        legendIconSize = 4.0,
+                        drawConnectors = TRUE,
+                        widthConnectors = 1.0,
+                        colConnectors = 'black',
+                        boxedLabels = TRUE,
+                        arrowheads = FALSE,
+                        gridlines.major = TRUE,
+                        gridlines.minor = FALSE,
+                        border = 'partial',
+                        borderWidth = 1.5,
+                        borderColour = 'black') + ylim(0,2)
+  
+  # save
+  pdf(paste0("volcano_",names(res[val]),"_CTR.ILBD_DEG.pdf"),width = 4, height = 6)
+  print(g1)
+  dev.off()
+  
+}
+
 
 
 ############################################################################################
@@ -375,34 +416,77 @@ yf_pigment_genes <- unique(yf_pigment_genes )
 # other undefines
 other <- c("ABCB6","ANKRD27","GLS","LAMP1","RAB32","RAB9A","MYEF2","SGSM2","FOXO1")
 
-# create list 
-gene_interest_list <- list(skin_melanin_enzymes,alt_PD,CA_precursor_NM_stock_trans_metab_A9.A10,CA_precursor_NM_stock_trans_metab_A6,
-                           CA_functional_DA,CA_functional_NE,Stress_granules.free_radical_scavenging,Lysosome_pathways,upstream_euNM,
-                           genes_link_skinpig.PD,pigmentation_network,other)
+# PD genetics
+g4pd_cnv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_cnv20200820.txt"
+g4pd_cv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_common_variant20200820.txt"
+g4pd_rg_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_rare_gene20200820.txt"
+g4pd_rv_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_rare_variant20200820.txt"
+g4pd_deg_path <- "/Users/zacc/USyd/spatial_transcriptomics/data/ref_genesets/t_gene_expression20200820.txt"
 
-names(gene_interest_list) <- c("skin_melanin_enzymes","alt_PD","CA_precursor_NM_stock_trans_metab_A9.A10","CA_precursor_NM_stock_trans_metab_A6",
-                              "CA_functional_DA","CA_functional_NE","Stress_granules.free_radical_scavenging","Lysosome_pathways","upstream_euNM",
-                              "genes_link_skinpig.PD","pigmentation_network","other")
+tmp <- read.delim(g4pd_rg_path, sep='\t', row.names=NULL, header=T)
+g4pd_rare_gene <- gsub(" ","",unique(unlist(tmp$Gene)))
+tmp <- read.delim(g4pd_cnv_path, sep='\t', row.names=NULL, header=T)
+g4pd_cnv <- unlist(strsplit(gsub(" ","",unique(unlist(tmp$Gene))),";|,|/"))
+tmp <- read.delim(g4pd_cv_path, sep='\t', row.names=NULL, header=T)
+g4pd_common_variant <- unlist(strsplit(gsub(" ","",unique(unlist(tmp$Gene))),";|,|/"))
+tmp <- read.delim(g4pd_rv_path, sep='\t', row.names=NULL, header=T)
+g4pd_rare_variant <- unlist(strsplit(gsub(" ","",unique(unlist(tmp$Gene))),";|,|/"))
+tmp <- read.delim(g4pd_deg_path)
+colnames(tmp) <- paste0("Published_PD_DEG_evidence_",colnames(tmp))
+g4pd_DEG <- gsub(" ","",unique(unlist(tmp$Published_PD_DEG_evidence_Gene)))
+
+
+# create list 
+# gene_interest_list <- list(skin_melanin_enzymes,alt_PD,CA_precursor_NM_stock_trans_metab_A9.A10,CA_precursor_NM_stock_trans_metab_A6,
+#                            CA_functional_DA,CA_functional_NE,Stress_granules.free_radical_scavenging,Lysosome_pathways,upstream_euNM,
+#                            genes_link_skinpig.PD,pigmentation_network,other,
+#                            g4pd_rare_gene, g4pd_cnv,g4pd_common_variant,g4pd_rare_variant,g4pd_DEG)
+# 
+# names(gene_interest_list) <- c("skin_melanin_enzymes","alt_PD","CA_precursor_NM_stock_trans_metab_A9.A10","CA_precursor_NM_stock_trans_metab_A6",
+#                               "CA_functional_DA","CA_functional_NE","Stress_granules.free_radical_scavenging","Lysosome_pathways","upstream_euNM",
+#                               "genes_link_skinpig.PD","pigmentation_network","other",
+#                               "g4pd_rare_gene", "g4pd_cnv","g4pd_common_variant","g4pd_rare_variant","g4pd_DEG")
+
+
+gene_interest_list <- list(alt_PD,pigmentation_network,
+                           g4pd_rare_gene, g4pd_cnv,g4pd_common_variant,g4pd_rare_variant,g4pd_DEG)
+
+names(gene_interest_list) <- c("alt_PD","pigmentation_network",
+                               "g4pd_rare_gene", "g4pd_cnv","g4pd_common_variant","g4pd_rare_variant","g4pd_DEG")
+
+
+############################################################################################
+###### Part 3: Heatmaps
+############################################################################################
+# thresholds
+adj_p_thresh = 0.05
+logfc_thresh = 1
 
 ##  Identify ontologies for each contrast
-cont_list <- res[146:length(res)]
+val_interest <- 147:length(voom_res)
+cont_list <- res[val_interest]
 # db
 dbs <- c("GO_Molecular_Function_2015", "GO_Cellular_Component_2015", "GO_Biological_Process_2015")
 # run
 up_ont_list <- list()
 down_ont_list <- list()
+mat_deg_count <- matrix(0,length(val_interest),3)
+colnames(mat_deg_count) <- c("upreg","downreg","contrast")
 for (i in 1:length(cont_list)){
   print(names(cont_list[i]))
+  mat_deg_count[i,3] <- names(cont_list[i])
   exp_cont <- as.data.frame(cont_list[[i]])
   
   # upreg list
-  upreg <- exp_cont$Gene[exp_cont$adj.P.Val < 0.05 & exp_cont$logFC > 0]
+  upreg <- exp_cont$Gene[exp_cont$adj.P.Val < adj_p_thresh  & exp_cont$logFC > logfc_thresh]
   print(length(upreg))
+  mat_deg_count[i,1] <- length(upreg)
   
   # downreg list
-  downreg <- exp_cont$Gene[exp_cont$adj.P.Val < 0.05 & exp_cont$logFC < 0]
+  downreg <- exp_cont$Gene[exp_cont$adj.P.Val < adj_p_thresh  & exp_cont$logFC < -(logfc_thresh)]
   print(length(downreg))
-
+  mat_deg_count[i,2] <- length(downreg)
+  
   # upreg top 3 passing adj p-val < 0.05
   enriched <- enrichr(upreg, dbs)
   enriched <- lapply(enriched, function(x) {
@@ -422,19 +506,16 @@ for (i in 1:length(cont_list)){
   
 }
 
-
-
-############################################################################################
-###### Part 3: Heatmaps
-############################################################################################
-cont_val = as.numeric(which(lapply(voom_res,function(x) any(x$adj.P.Val < 0.05)) == "TRUE")) # contrasts with sig genes
+# Define the relative numbers of contrasts with sig DEGs
+cont_val = as.numeric(which(lapply(voom_res,function(x) any(as.numeric(x$adj.P.Val) < adj_p_thresh & abs(as.numeric(x$logFC)) > logfc_thresh )) == "TRUE")) # contrasts with sig genes
+ont_val = which(val_interest %in% cont_val)
 
 for (rel_val in 1:length(cont_val)){
   print(rel_val)
   # get dataset from contrast
   val=cont_val[rel_val] # contrast numbers
   
-  set.seed(123)
+  set.seed(127)
   # print model number
   print(cont_dat$model.number[val])
   cont_dat$description[val]
@@ -445,13 +526,17 @@ for (rel_val in 1:length(cont_val)){
   
   # get sig genes
   genes <- voom_res[[val]]
-  genes <- row.names(genes)[genes$adj.P.Val < 0.05]
+  genes <- genes[genes$adj.P.Val < adj_p_thresh  & abs(genes$logFC) > logfc_thresh, ]
+  up.down_genes <- row.names(genes)
+  up.down_genes[genes$logFC > logfc_thresh] <- "up"
+  up.down_genes[genes$logFC < -logfc_thresh] <- "down"
+  genes <- row.names(genes)
   
   # create expression df & targ with design row.names
   y <- exp_dat[genes,row.names(targ)]
   
-  # retrieve GO row annotations
-  tmp <- up_ont_list[[rel_val]]
+  # retrieve GO row annotations - up-reg
+  tmp <- up_ont_list[[ont_val[rel_val]]]
   tmp <- tmp[tmp$Adjusted.P.value < 0.05,]
   
   go_list <- list()
@@ -483,6 +568,45 @@ for (rel_val in 1:length(cont_val)){
   }
   
   go_annot <- do.call(cbind,go_list)
+  go_annot <- go_annot[,!is.na(colnames(go_annot))]
+  
+  # retrieve GO row annotations - down-reg
+  tmp <- down_ont_list[[ont_val[rel_val]]]
+  tmp <- tmp[tmp$Adjusted.P.value < 0.05,]
+  
+  go_list <- list()
+  tmp2 <- tmp[tmp$List_Name == "GO_Biological_Process_2015",][1:3,]
+  if(length(tmp2) > 0){
+    list_bool <- lapply(strsplit(tmp2$Genes,";"), function(x) genes %in% x)
+    tmp3 <- t(do.call(rbind,list_bool))
+    colnames(tmp3) <- tmp2$Term
+    row.names(tmp3) <- genes
+    go_list[[1]] <- tmp3
+  }
+  
+  tmp2 <- tmp[tmp$List_Name == "GO_Cellular_Component_2015",][1:3,]
+  if(length(tmp2) > 0){
+    list_bool <- lapply(strsplit(tmp2$Genes,";"), function(x) genes %in% x)
+    tmp3 <- t(do.call(rbind,list_bool))
+    colnames(tmp3) <- tmp2$Term
+    row.names(tmp3) <- genes
+    go_list[[2]] <- tmp3
+  }
+  
+  tmp2 <- tmp[tmp$List_Name == "GO_Molecular_Function_2015",][1:3,]
+  if(length(tmp2) > 0){
+    list_bool <- lapply(strsplit(tmp2$Genes,";"), function(x) genes %in% x)
+    tmp3 <- t(do.call(rbind,list_bool))
+    colnames(tmp3) <- tmp2$Term
+    row.names(tmp3) <- genes
+    go_list[[3]] <- tmp3
+  }
+  
+  go_annot2 <- do.call(cbind,go_list)
+  go_annot2 <- go_annot2[,!is.na(colnames(go_annot2))]
+  
+  # combine
+  go_annot <- cbind(go_annot,go_annot2)
   
   # compare to 
   list_bool <- lapply(gene_interest_list, function(x) genes %in% x)
@@ -493,13 +617,20 @@ for (rel_val in 1:length(cont_val)){
   annotation_matrix <- cbind(go_annot,tmp3)
   annotation_matrix <- apply(annotation_matrix,2,as.factor)
   
-  # # restrict to any annots
+  # rename colnames
+  colnames(annotation_matrix) <- gsub("\\s*\\(GO.*$", "",colnames(annotation_matrix ))
+  colnames(annotation_matrix) <- gsub("_"," ",colnames(annotation_matrix))
+  
+  # # restrict to genes with any annotations
   # any_annot <- apply(annotation_matrix,1,any)
   # annotation_matrix <- annotation_matrix[any_annot,]
   # y <- y[any_annot,]
-  
+
   # construct row annotations 
-  row_ha <- rowAnnotation("Annotation" = annotation_matrix, col = list("TRUE" = "grey", "FALSE" = "black"), border = TRUE,gp = gpar(col = "black"))
+  row_ha <- rowAnnotation("Annotation" = annotation_matrix, 
+                          col = list(Annotation = c("TRUE" = "magenta3", "FALSE" = "grey80")), 
+                          border = TRUE,gp = gpar(col = "white"))
+  
   
   # construct column annotations
   col_ha = HeatmapAnnotation(
@@ -515,45 +646,87 @@ for (rel_val in 1:length(cont_val)){
                 top_annotation = col_ha, 
                 show_column_names = FALSE,
                 cluster_columns = TRUE,
+                row_split =  up.down_genes,
                 row_names_gp = gpar(fontsize = 3),
-                #row_split = targets$Group,
                 column_title = cont_dat$description[val],
                 cluster_row_slices = FALSE,
-  
-                #row_title_gp = gpar(col = c("Dopamine" = "purple","Ca2+ & Transmission" = "orange"), cex = 0.7),
                  width = ncol(y)*unit(1, "mm"), 
                  height = nrow(y)*unit(1, "mm"))
   
-  pdf(paste0("heatmap_",make.names(cont_dat$description[val]),".",val,".pdf"),width = 15,height =100)
+  pdf(paste0("heatmap_",make.names(cont_dat$description[val]),".",val,"_CTR.ILBD.pdf"),width = 15,height =100)
   draw(ht)
   dev.off()
 }
 
 
-# assign plot data
-name_plot = "hits_aavgq_genes.interest"
-#name_plot = "hits_aavgq.SN.TH_n59"
-
-# plot
-pdf(paste0("heatmap_",name_plot,".pdf"))
-draw(ht, annotation_legend_list = list(lgd_pvalue, lgd_sig))
-dev.off()
-
-
-
-
-
-
-
-
-
-
-
 
 
 ############################################################################################
-###### Part 2: Exploratory plots of LIMMA Voom results
+###### Part X: Exploratory plots of LIMMA Voom results
 ############################################################################################
+
+gene_name <- "FBXO22"
+gene <- exp_dat[gene_name,]
+dplot <- cbind(meta_dat,gene = unlist(gene))
+data_table <- dplot[dplot$segment == "TH" & !is.na(dplot$iNM_quantile),]
+colnames(data_table) <- make.names(colnames(data_table))
+data_table <- data_table[,c("ROI","gene","Brainbank_ID", "Age","Sex","PMD.hs","Plate_ID","DV200","DeduplicatedReads","GenesDetected","iNM_quantile")]
+
+y_list <- c("gene")
+# define variables
+x_variable = "iNM_quantile"
+y_variable = y_list[1]
+x_lab = ""
+y_lab = paste0(gene_name," Normalized Counts")
+colour_palette = ROI_col
+
+# format for plotting
+tmp <- aggregate(formula(paste(y_variable," ~ ",x_variable)), data_table, mean)
+fact_lvls <- tmp[order(-tmp[,y_variable]),][,x_variable]
+data_table[,x_variable] <- factor(data_table[,x_variable], levels = fact_lvls)
+
+# make violin plot 
+bxp <- ggviolin(
+  data_table, x = x_variable, y = y_variable, 
+  fill = x_variable, palette = colour_palette) + theme(legend.position = "none") + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + ylab(y_lab) + xlab(x_lab) + 
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) + stat_summary(fun.data=mean_sdl, mult=1, 
+                                                                                   geom="pointrange", color="black") 
+# save plot
+arrange <- ggarrange(plotlist=list(g1,bxp), nrow=2, ncol=2)
+ggsave(paste("violin_MITF.CTR.ROI.pdf"), arrange)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Barplots of n sig genes
 ## Neuromelanin in CTRs
 cont_dat$contrast_short <- paste(paste0(cont_dat$description," [",cont_dat$segment,"]"))

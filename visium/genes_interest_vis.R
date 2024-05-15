@@ -25,6 +25,7 @@ brain.merge_sn <- subset(brain.merge, subset = tissue == "SN" )
 
 # genes of interest
 gene_interest <- c("CACNA1C","CACNA1H","KCND3","CACNA2D1","KCNIP1","KCNA10","KCNC1","HCN1")
+gene_interest <- c("TYR","MITF")
 
 # plot each slice and combine
 for (i in gene_interest){
