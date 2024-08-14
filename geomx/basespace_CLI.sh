@@ -144,7 +144,7 @@ $HOME/bs list datasets --project=6402396
 $HOME/bs launch application -n 'GeoMx® NGS Pipeline' -i '2163161' --app-version 2.0.21 \
 -o project-id:1232 -o sample-id:2323244
 
-# record analysed projects
+## record analysed projects
 # geomx_281023_PB
 # geomx_281023_PF
 # geomx_281023_PEG
@@ -153,12 +153,10 @@ $HOME/bs launch application -n 'GeoMx® NGS Pipeline' -i '2163161' --app-version
 # geomx_281023_round1
 
 
-DSP-1001660021814-B-G10.dcc - error processing fastq - geomx_281023_PB
-DSP-1001660021820-F-B10.dcc - error processing fastq - geomx_281023_PF
+# DSP-1001660021814-B-G10.dcc - error processing fastq - geomx_281023_PB
+# DSP-1001660021820-F-B10.dcc - error processing fastq - geomx_281023_PF
 
-re-upload reads and re-run
-
-
+## re-upload reads and re-run
 # may need to combine technical replicates
 cd /Users/zacc/USyd/spatial_transcriptomics/analysis/geomx/geomx_oct2023
 mkdir -p merged_reps

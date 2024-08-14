@@ -12,11 +12,15 @@ library(data.table)
 #### Inputs
 ############################################################################################
 
-analysis_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/SN_210823"# location of vis data
-results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/RCTD_results'
-tissue_analysis = "SN" # tissue to analyse
-run_names = c("V52Y16-079-A1","V52Y16-079-B1")
-list_ID = c("CTR","PD")
+# # visium original
+# analysis_dir = "/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/SN_210823"# location of vis data
+# results_folder = '/Users/zacc/USyd/spatial_transcriptomics/analysis/nakamura_hits/RCTD_results'
+# tissue_analysis = "SN" # tissue to analyse
+# run_names = c("V52Y16-079-A1","V52Y16-079-B1")
+# list_ID = c("CTR","PD")
+
+# visium 051324
+/Users/zacc/USyd/spatial_transcriptomics/analysis/visium/vis_130524
 
 # single-cell
 cell_ranger_data = "/Users/zacc/USyd/spatial_transcriptomics/analysis/Kamath2023_cellranger" # single-cell cell ranger output
