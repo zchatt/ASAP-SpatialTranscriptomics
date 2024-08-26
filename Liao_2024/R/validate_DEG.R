@@ -67,7 +67,7 @@ counts <- as.matrix(gxdat_s@assays$RNA$data)
 cell_meta <- as.data.frame(gxdat_s@meta.data)
 
 # select subset
-index <- which(cell_meta$ROI == "SNV" & cell_meta$Diagnosis %in% c("CTR","ePD") & cell_meta$segment == "Full ROI" )
+index <- which(cell_meta$ROI == "SNV" & cell_meta$Diagnosis %in% c("CTR","ILBD") & cell_meta$segment == "TH" )
 counts <- counts[,index]
 cell_meta <- cell_meta[index,]
 #cell_meta$Diagnosis[cell_meta$Diagnosis != "CTR"] <- "PD"
@@ -104,7 +104,7 @@ v <- voom(counts,design)
 vfit <- lmFit(v)
 
 # Perform LIMMA contrasts
-cont.matrix <- makeContrasts(A="DiagnosisePD",levels=design) # PD-CTR
+cont.matrix <- makeContrasts(A="DiagnosisILBD",levels=design) # PD-CTR
 fit2 <- contrasts.fit(vfit, cont.matrix)
 vfit2 <- eBayes(fit2)
 options(digits=3)
@@ -169,7 +169,7 @@ col_ha = HeatmapAnnotation(
   Age = cell_meta$Age,
   DV200 = cell_meta$DV200,
   PMD = cell_meta$PMD.hs,
-  col = list(Dx = c("ePD" = "hotpink1","CTR" = "black"),
+  col = list(Dx = c("ILBD" = "hotpink1","CTR" = "black"),
              Subject = Subject_vec,
              Sex = c("M" = "lightblue","F" = "purple"),
              Age = age_fun,
