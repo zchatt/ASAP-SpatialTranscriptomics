@@ -14,6 +14,7 @@ The following scripts are used to perform variant calling on 10X snRNAseq data f
 
 ## snRNAseq - transcriptomics
 ### Overview
+The following scripts are used to quantify human nuclei within xenograft snRNAseq data, define the cell-type and perform DEG analysis. 
 
 1. cellranger.sh - Alignment and gene expression counting of snRNAseq data
 2. GRCh38_and_mRatBN7-2023-A_build.sh - Building of merged human and rat reference genome
