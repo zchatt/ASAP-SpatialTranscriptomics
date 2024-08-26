@@ -17,6 +17,7 @@ The following scripts are used to perform variant calling on 10X snRNAseq data f
 
 1. cellranger.sh - Alignment and gene expression counting of snRNAseq data
 2. GRCh38_and_mRatBN7-2023-A_build.sh - Building of merged human and rat reference genome
+3. snrnaseq_lowlevel.Rmd - R scripts to define human cells population, DA neuron populations and perform DEG.
 
 ### License
 This project is licensed under the MIT License.
