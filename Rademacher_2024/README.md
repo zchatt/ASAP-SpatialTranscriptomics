@@ -2,7 +2,7 @@
 
 This repository contains analysis scripts used by The University of Sydney collaborators to analyse spatial transcriptomics as part of [Aligning Science Accross Parkinson's](https://parkinsonsroadmap.org/#).
 
-NOTE: This repo branch "Rademacher_2024" contains scripts used in the analysis of "Chronic hyperactivation of midbrain dopamine neurons causes preferential dopamine neuron degeneration"
+NOTE: The "Rademacher_2024" directory contains scripts used in the analysis of "Chronic hyperactivation of midbrain dopamine neurons causes preferential dopamine neuron degeneration"
 
 ## Data Processing and Analysis for Nanostring GeoMx
 ### Overview
