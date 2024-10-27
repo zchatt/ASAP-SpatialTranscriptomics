@@ -2,10 +2,10 @@
 
 This repository contains analysis scripts used by The University of Sydney collaborators to analyse spatial transcriptomics as part of [Aligning Science Accross Parkinson's](https://parkinsonsroadmap.org/#).
 
-NOTE: This directory contains scripts used in the processing of Nanostring GeoMx data for the
-	1) Spatial Transcriptomics data (GeoMx) of midbrain dopamine cells in control and PD subjects [10.5281/zenodo.13626106](10.5281/zenodo.13626106)
-	2) Spatial Transcriptomics data (GeoMx) of midbrain tissue in control and PD subjects [10.5281/zenodo.13626167](10.5281/zenodo.13626167)
-	3) Spatial Transcriptomics data (GeoMx) of locus coeruleus dopamine cells in control and PD subjects [10.5281/zenodo.13626177](10.5281/zenodo.13626177)
+NOTE: This directory contains scripts used in the processing of Nanostring GeoMx data for the following datasets;
+(1) Spatial Transcriptomics data (GeoMx) of midbrain dopamine cells in control and PD subjects [10.5281/zenodo.13626106](10.5281/zenodo.13626106)
+(2) Spatial Transcriptomics data (GeoMx) of midbrain tissue in control and PD subjects [10.5281/zenodo.13626167](10.5281/zenodo.13626167)
+(3) Spatial Transcriptomics data (GeoMx) of locus coeruleus dopamine cells in control and PD subjects [10.5281/zenodo.13626177](10.5281/zenodo.13626177)
 
 ## Low Level Data Processing of Nanostring GeoMx
 ### Overview
