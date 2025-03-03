@@ -28,6 +28,10 @@ OR
 
 5. [neuroestimator_compare.R](/Rademacher_2024/R/neuroestimator_compare.R) - Scripts used to normalize and compare NEUROeSTIMator results generated from Visium assessment of mouse.
 
+4. [neuroestimator_run.R](/R/neuroestimator_run.R) - Scripts used to run NEUROeSTIMator (Bahl et al., 2024)(https://www.nature.com/articles/s41467-023-44503-5) on Visium mouse datasets.
+
+5. [neuroestimator_compare.R](/R/neuroestimator_compare.R) - Scripts used to normalize and compare NEUROeSTIMator results generated from Visium assessment of mouse.
+
 ### Usage
 To run the script, follow these steps:
 
