@@ -18,15 +18,15 @@ OR
 
 ### The analysis should be performed in the following order:
 
-1. [quality_control_gx.R](/R/quality_control_gx.R) - Scripts for reading and performing quality control of GeoMx data including ROI and RNA filtering and generation of QC plots.
+1. [quality_control_gx.R](/Rademacher_2024/R/quality_control_gx.R) - Scripts for reading and performing quality control of GeoMx data including ROI and RNA filtering and generation of QC plots.
 
-2. [normalize.batch.cluster_gx.R](/R/normalize.batch.cluster_gx.R) - Scripts for the Normalization (please refer to [normalization_review_vis.R](/R/normalization_review_gx.R) for selection of normalization process). The scripts also perform batch correction and clustering.
+2. [normalize.batch.cluster_gx.R](/Rademacher_2024/R/normalize.batch.cluster_gx.R) - Scripts for the Normalization (please refer to [normalization_review_vis.R](/Rademacher_2024/R/normalization_review_gx.R) for selection of normalization process). The scripts also perform batch correction and clustering.
 
-3. [validate_DEG.R](/R/validate_DEG.R) - Scripts used for human validation of DEGs identified by chemogenetic (DREADD) mouse model to chronically hyperactivate of DA neurons.
+3. [validate_DEG.R](/Rademacher_2024/R/validate_DEG.R) - Scripts used for human validation of DEGs identified by chemogenetic (DREADD) mouse model to chronically hyperactivate of DA neurons.
 
-4. [neuroestimator_run.R](/R/neuroestimator_run.R) - Scripts used to run NEUROeSTIMator (Bahl et al., 2024)(https://www.nature.com/articles/s41467-023-44503-5) on Visium mouse datasets.
+4. [neuroestimator_run.R](/Rademacher_2024/R/neuroestimator_run.R) - Scripts used to run NEUROeSTIMator (Bahl et al., 2024)(https://www.nature.com/articles/s41467-023-44503-5) on Visium mouse datasets.
 
-5. [neuroestimator_compare.R](/R/neuroestimator_compare.R) - Scripts used to normalize and compare NEUROeSTIMator results generated from Visium assessment of mouse.
+5. [neuroestimator_compare.R](/Rademacher_2024/R/neuroestimator_compare.R) - Scripts used to normalize and compare NEUROeSTIMator results generated from Visium assessment of mouse.
 
 ### Usage
 To run the script, follow these steps:
