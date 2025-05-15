@@ -589,7 +589,7 @@ hallmark_gene_sets <- msigdbr(species = "Homo sapiens", category = "H")
 # Filter for the oxidative phosphorylation hallmark gene set
 oxphos_genes <- hallmark_gene_sets %>%
   filter(gs_name == "HALLMARK_OXIDATIVE_PHOSPHORYLATION") %>%
-  select(human_gene_symbol)
+  dplyr::select(human_gene_symbol)
 
 ## cor-cor
 # Define genes of interest
@@ -832,8 +832,10 @@ exp_dat1 <- exp_dat[, row.names(meta_dat1)]
 # Calculate correlation matrix - total matrix
 cor_matrix <- cor(t(exp_dat1), method = "pearson", use = "pairwise.complete.obs")
 
+
+
 # Function to generate correlation plots
-generate_corr_plot <- function(gene_of_interest, cor_matrix, oxphos_genes) {
+generate_corr_plot <- function(gene_of_interest, cor_matrix, oxphos_genes,csv_file_name) {
   
   # Ensure oxphos_genes are present in cor_matrix
   available_oxphos_genes <- intersect(rownames(cor_matrix), oxphos_genes)
@@ -863,6 +865,11 @@ generate_corr_plot <- function(gene_of_interest, cor_matrix, oxphos_genes) {
                   rep("Else", length(interest_else_corr))),
     Correlation = c(interest_oxphos_corr, interest_else_corr)
   )
+  
+  print(table(corr_df$GeneGroup))
+  # write to file for Szu-Chi
+  write.csv(corr_df,file=csv_file_name)
+
   
   # Perform Wilcoxon rank-sum test
   wilcox_oxphos_vs_else <- wilcox.test(
@@ -902,9 +909,8 @@ generate_corr_plot <- function(gene_of_interest, cor_matrix, oxphos_genes) {
 }
 
 # Generate plots for CHCHD2 and CHCHD10
-g1 <- generate_corr_plot("CHCHD2", cor_matrix, oxphos_genes)
-
-g2 <- generate_corr_plot("CHCHD10", cor_matrix, oxphos_genes)
+g1 <- generate_corr_plot("CHCHD2", cor_matrix, oxphos_genes,"chchd2_th.snv_corr.csv")
+g2 <- generate_corr_plot("CHCHD10", cor_matrix, oxphos_genes,"chchd10_th.snv_corr.csv")
 
 # Display the plots in the R console
 print(g1)
@@ -927,9 +933,8 @@ exp_dat1 <- exp_dat[, row.names(meta_dat1)]
 cor_matrix <- cor(t(exp_dat1), method = "pearson", use = "pairwise.complete.obs")
 
 # Generate plots for CHCHD2 and CHCHD10
-g1 <- generate_corr_plot("CHCHD2", cor_matrix, oxphos_genes)
-
-g2 <- generate_corr_plot("CHCHD10", cor_matrix, oxphos_genes)
+g1 <- generate_corr_plot("CHCHD2", cor_matrix, oxphos_genes,"chchd2_th.snd_corr.csv")
+g2 <- generate_corr_plot("CHCHD10", cor_matrix, oxphos_genes,"chchd10_th.snd_corr.csv")
 
 # Display the plots in the R console
 print(g1)
@@ -954,7 +959,7 @@ colnames(meta_dat) <- make.names(colnames(meta_dat))
 # define df and meta data
 meta_dat <- meta_dat[meta_dat$segment == "TH" & # DA neurons
                        meta_dat$ROI %in% c("SNV","SND") & # SNV and SND restions
-                       meta_dat$Diagnosis %in% c("CTR","ILBD","ePD","lPD"),] # Dx
+                       meta_dat$Diagnosis %in% c("CTR","ILBD"),] # Dx
 exp_dat <- exp_dat[,row.names(meta_dat)]
 
 # format covariates
@@ -980,7 +985,7 @@ for (val in 1:length(contrast_var)){
   
   dge <- DGEList(exp_dat2, group = meta_dat2$condt)
   dge <- calcNormFactors(dge)
-  design <- model.matrix( ~ condt + Brainbank_ID, data=meta_dat2)
+  design <- model.matrix( ~ condt + DV200 + Age + PMD.hs + Sex, data=meta_dat2)
   vm <- voom(dge, design = design, plot = TRUE)
   fit <- lmFit(vm, design = design)
   fit <- eBayes(fit)
@@ -992,7 +997,7 @@ for (val in 1:length(contrast_var)){
 
 # format results
 res <- lapply(res, function(x) {
-  x <- x[,-grep("Brainbank_ID",colnames(x))]
+  #x <- x[,-grep("DV200",colnames(x))]
   x$Gene <- row.names(x)
   row.names(x) <- NULL
   return(x)
@@ -1009,36 +1014,67 @@ df$stars <- cut(as.numeric(df$adj.P.Val),
 df <- df[df$contrast == "CTR",] 
 df <- df[complete.cases(df),]
 
+# Volcano plot
+# set genes of interest
+genes_of_interest <- oxphos_genes
+
 # Define significance categories
 df$color_group <- 'grey'  # Default: all genes are grey (non-significant)
+df$logFC <- as.numeric(df$condtTRUE)
+df$adj.P.Val <- as.numeric(df$adj.P.Val)
 
 # Assign colors based on significance thresholds
-df$color_group[df$adj.P.Val < 0.05 & abs(df$condtTRUE) > 0.5] <- 'red'   # Highly significant
-df$color_group[df$adj.P.Val < 0.05 & abs(df$condtTRUE) <= 0.5] <- 'blue'  # p < 0.05 but FC not significant
-df$color_group[df$adj.P.Val >= 0.05 & abs(df$condtTRUE) > 0.5] <- 'black' # FC significant but p not
+df$color_group[df$adj.P.Val < 0.05 & abs(df$logFC) > 0.5] <- 'red'   # Highly significant
+df$color_group[df$adj.P.Val < 0.05 & abs(df$logFC) <= 0.5] <- 'blue'  # p < 0.05 but FC not significant
+df$color_group[df$adj.P.Val >= 0.05 & abs(df$logFC) > 0.5] <- 'black' # FC significant but p not
 
-# Set all non-OXPHOS genes to faded grey
-df$color_group[!df$Gene %in% oxphos_genes] <- 'grey'
+# Set all non genes of interest faded grey
+df$color_group[!df$Gene %in% genes_of_interest] <- 'grey'
+df$color_group[df$Gene %in% c("CHCHD2","CHCHD10")] <- 'green'
+
+
+# Define color mapping explicitly
+color_map <- c("grey" = "grey", "red" = "red", "blue" = "blue", "black" = "black","green" = "green")
+
+color_legend <- c( "grey" = "non-oxphos", 
+                   "black" = "N/S" ,
+                   "blue" = "p-value" ,
+                   "red" = "p-value & FC",
+                   "green" = "CHCHD2/10")
+
+# Order factor levels and sort dataframe
+df$color_group <- factor(df$color_group, levels = c("grey", "black", "blue", "red","green"))
+df <- df[order(df$color_group), ]
+
+# # Convert back to character for EnhancedVolcano color mapping
+#df$color_group <- as.character(df$color_group)
 
 # Set labels: only for OXPHOS genes that meet significance criteria
-df$label_gene <- ifelse(df$Gene %in% oxphos_genes & df$color_group %in% c("red", "blue", "black"), df$Gene, "")
+df$label_gene <- ifelse(df$Gene %in% genes_of_interest & df$color_group == "red", df$Gene, "")
 
-# Volcano plot
+# plot
 plot1 <- EnhancedVolcano(df,
-                         lab = df$label_gene,  # Only label significant OXPHOS genes
-                         x = 'condtTRUE',  
-                         y = 'adj.P.Val',  
+                         #lab = df$label_gene,  # Use labels properly
+                         lab = NA,
+                         x = 'logFC',  
+                         y = 'adj.P.Val', 
+                         xlim = c(-1.5,1.5), ylim = c(0,15),
                          pCutoff = 0.05,  
                          FCcutoff = 0.5,  
                          pointSize = 3.0,  
                          labSize = 4.0,  
-                         colAlpha = ifelse(df$Gene %in% oxphos_genes, 0.75, 0.1),  # Lower alpha for non-OXPHOS genes
-                         title = 'OXPHOS DEG (SNV - SND)',
+                         colAlpha = ifelse(df$Gene %in% c("CHCHD2","CHCHD10",genes_of_interest), 0.75, 0.1),  # Transparency control
+                         title = 'Control TH+ SNV - SND; OXPHOS highlighted',
                          subtitle = '',
                          caption = "Threshold: adj.P.Val < 0.05 & |FC| > 0.5",
-                         legendPosition = 'right',
-                         col = c('black', 'grey', 'blue', 'red'),  # Order: Black (FC only), Grey (NS), Blue (p only), Red (both)
-                         drawConnectors = TRUE,  
-                         widthConnectors = 1)
+                         legendLabels = c("N/S", "p-value", "p-value & FC", "non-ribosomal"),  # ensure labels match desired text
+                         legendPosition = "right",           # keep legend on the right
+                         colCustom = color_map[as.character(df$color_group)],  # Explicit color mapping
+                         drawConnectors = TRUE) 
+# add lables
+plot1 <- plot1 + 
+  scale_color_manual(values = color_map, labels = color_legend) + 
+  geom_vline(xintercept = 0, lty = 1, size = 1 )  
 
-ggsave("volcano_oxphos_DEG.png", plot = plot1, width = 12, height = 8, dpi = 300)
+
+ggsave("volcano_oxphos_DEG.pdf", plot = plot1, width = 12, height = 8)
